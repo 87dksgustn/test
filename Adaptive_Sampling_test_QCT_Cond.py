@@ -4,11 +4,12 @@ import json
 import logging
 import warnings
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import optuna
 
 # Logging setup
 logging.basicConfig(
@@ -28,8 +29,6 @@ from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
-from sklearn.neural_network import MLPRegressor
-from sklearn.multioutput import MultiOutputRegressor
 from scipy.stats import spearmanr
 
 warnings.filterwarnings("ignore")
@@ -58,21 +57,32 @@ N_SPLITS = 5
 INITIAL_DOE_SIZE = 50
 BATCH_SIZE = 10
 MAX_TOTAL_TRAIN_SIZE = 400   # stopping이 있으므로 최대 상한선(cap)
-TOP_PERCENT = 0.10
+TOP_PERCENT = 0.03
 TOP_K = 10
-ALPHAS = [0.3, 0.5, 0.7]
+ALPHAS = [0.5]  # 고정 alpha 전략용
 RANDOM_STATE = 42
 
+# Dynamic alpha strategy settings
+# alpha 순서: 0.7 (탐색 강조) -> 0.5 -> 0.3 (활용 강조)
+DYNAMIC_ALPHA_SEQUENCE = [0.7, 0.5, 0.3]
+
+# dynamic_size_early: train size 기반 전환 임계값
+DYNAMIC_SIZE_THRESHOLDS = [100, 200]  # [50-100]: 0.7, [100-200]: 0.5, [200+]: 0.3
+
 # Model settings
-MLP_ENSEMBLE_SIZE = 5
-MLP_HIDDEN_LAYER_SIZES = (64, 64)
-MLP_MAX_ITER = 2000
+GPR_N_RESTARTS_OPTIMIZER = 2
+
+# Optuna settings
+USE_OPTUNA_FOR_GPR = True
+OPTUNA_N_TRIALS = 30
+OPTUNA_PRUNER_STARTUP_TRIALS = 10
+OPTUNA_PRUNER_WARMUP_STEPS = 5
 
 # Target-reached stopping settings
 USE_TARGET_STOPPING = True
 STOP_MIN_TRAIN_SIZE = 100
-STOP_TARGET_REGRET_OBJ = 0.05   # lower is better
-STOP_TARGET_R2_MEAN = 0.95      # higher is better
+STOP_TARGET_REGRET_OBJ = 0.03   # lower is better
+STOP_TARGET_R2_MEAN = 0.97      # higher is better
 
 
 # ============================================================
@@ -91,10 +101,15 @@ def validate_config() -> None:
     for alpha in ALPHAS:
         if not 0 <= alpha <= 1:
             raise ValueError(f"Alpha {alpha} must be in [0, 1]")
+    for alpha in DYNAMIC_ALPHA_SEQUENCE:
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"Dynamic alpha {alpha} must be in [0, 1]")
     if N_SPLITS < 2:
         raise ValueError("N_SPLITS must be >= 2")
     if USE_TARGET_STOPPING and STOP_MIN_TRAIN_SIZE < INITIAL_DOE_SIZE:
         raise ValueError("STOP_MIN_TRAIN_SIZE should be >= INITIAL_DOE_SIZE")
+    if USE_OPTUNA_FOR_GPR and OPTUNA_N_TRIALS <= 0:
+        raise ValueError("OPTUNA_N_TRIALS must be > 0")
     logger.info("Configuration validated successfully.")
 
 
@@ -169,9 +184,15 @@ def build_preprocessor(cat_col: str, cont_cols: List[str]) -> ColumnTransformer:
 # Models
 # ============================================================
 class GPRMultiOutputModel:
-    def __init__(self, preprocessor: ColumnTransformer, random_state: int = 42):
+    def __init__(
+        self,
+        preprocessor: ColumnTransformer,
+        random_state: int = 42,
+        gpr_params: Optional[Dict[str, Any]] = None,
+    ):
         self.preprocessor = clone(preprocessor)
         self.random_state = random_state
+        self.gpr_params = gpr_params or {}
         self.models = []
         self.y_scaler = StandardScaler()
         self.is_fitted = False
@@ -180,16 +201,26 @@ class GPRMultiOutputModel:
         Xp = self.preprocessor.fit_transform(X)
         ys = self.y_scaler.fit_transform(y)
         self.models = []
+
+        constant_init = float(self.gpr_params.get("constant_init", 1.0))
+        constant_low = float(self.gpr_params.get("constant_low", 1e-3))
+        constant_high = float(self.gpr_params.get("constant_high", 1e3))
+        length_scale_init = float(self.gpr_params.get("length_scale_init", 1.0))
+        length_scale_low = float(self.gpr_params.get("length_scale_low", 1e-2))
+        length_scale_high = float(self.gpr_params.get("length_scale_high", 1e3))
+        noise_level_init = float(self.gpr_params.get("noise_level_init", 1e-5))
+        n_restarts_optimizer = int(self.gpr_params.get("n_restarts_optimizer", GPR_N_RESTARTS_OPTIMIZER))
+
         for i in range(ys.shape[1]):
             kernel = (
-                C(1.0, (1e-3, 1e3))
-                * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 1e3))
-                + WhiteKernel(noise_level=1e-5)
+                C(constant_init, (constant_low, constant_high))
+                * RBF(length_scale=length_scale_init, length_scale_bounds=(length_scale_low, length_scale_high))
+                + WhiteKernel(noise_level=noise_level_init)
             )
             gpr = GaussianProcessRegressor(
                 kernel=kernel,
                 normalize_y=False,
-                n_restarts_optimizer=2,
+                n_restarts_optimizer=n_restarts_optimizer,
                 random_state=self.random_state,
             )
             gpr.fit(Xp, ys[:, i])
@@ -211,71 +242,6 @@ class GPRMultiOutputModel:
         std_scaled = np.column_stack(std_scaled_list)
 
         pred = self.y_scaler.inverse_transform(pred_scaled)
-        std = std_scaled * self.y_scaler.scale_
-        return pred, std
-
-
-class MLPEnsembleModel:
-    def __init__(
-        self,
-        preprocessor: ColumnTransformer,
-        ensemble_size: int = 5,
-        hidden_layer_sizes: Tuple[int, ...] = (64, 64),
-        max_iter: int = 2000,
-        random_state: int = 42,
-    ):
-        self.preprocessor = clone(preprocessor)
-        self.ensemble_size = ensemble_size
-        self.hidden_layer_sizes = hidden_layer_sizes
-        self.max_iter = max_iter
-        self.random_state = random_state
-        self.models = []
-        self.y_scaler = StandardScaler()
-        self.is_fitted = False
-
-    def fit(self, X: pd.DataFrame, y: np.ndarray):
-        Xp = self.preprocessor.fit_transform(X)
-        ys = self.y_scaler.fit_transform(y)
-        self.models = []
-        n = len(Xp)
-        rng = np.random.RandomState(self.random_state)
-
-        for i in range(self.ensemble_size):
-            idx = rng.choice(n, size=n, replace=True)
-            Xb = Xp[idx]
-            yb = ys[idx]
-            base = MLPRegressor(
-                hidden_layer_sizes=self.hidden_layer_sizes,
-                activation="relu",
-                solver="adam",
-                alpha=1e-4,
-                learning_rate_init=1e-3,
-                max_iter=self.max_iter,
-                early_stopping=True,
-                validation_fraction=0.15,
-                n_iter_no_change=30,
-                random_state=self.random_state + i,
-            )
-            model = MultiOutputRegressor(base)
-            model.fit(Xb, yb)
-            self.models.append(model)
-
-        self.is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-        if not self.is_fitted:
-            raise RuntimeError("Model must be fitted before predict().")
-        Xp = self.preprocessor.transform(X)
-        preds_scaled = []
-        for model in self.models:
-            preds_scaled.append(model.predict(Xp))
-        preds_scaled = np.stack(preds_scaled, axis=0)  # [n_models, n_samples, n_targets]
-
-        mean_scaled = preds_scaled.mean(axis=0)
-        std_scaled = preds_scaled.std(axis=0)
-
-        pred = self.y_scaler.inverse_transform(mean_scaled)
         std = std_scaled * self.y_scaler.scale_
         return pred, std
 
@@ -422,6 +388,37 @@ def select_batch_uncertainty_exploitation(
     return pool_indices[chosen_pos]
 
 
+def get_dynamic_alpha_iter_equal(iteration: int, n_iterations: int) -> float:
+    """
+    Dynamic alpha based on iteration (equal split into 3 phases).
+    Phase 1 (0~33%): 0.7 (exploration)
+    Phase 2 (33~66%): 0.5 (balanced)
+    Phase 3 (66~100%): 0.3 (exploitation)
+    """
+    phase_size = n_iterations / 3.0
+    if iteration < phase_size:
+        return DYNAMIC_ALPHA_SEQUENCE[0]  # 0.7
+    elif iteration < 2 * phase_size:
+        return DYNAMIC_ALPHA_SEQUENCE[1]  # 0.5
+    else:
+        return DYNAMIC_ALPHA_SEQUENCE[2]  # 0.3
+
+
+def get_dynamic_alpha_size_early(train_size: int) -> float:
+    """
+    Dynamic alpha based on train size (early exploration emphasis).
+    [50-100]: 0.7 (exploration)
+    [100-200]: 0.5 (balanced)
+    [200+]: 0.3 (exploitation)
+    """
+    if train_size < DYNAMIC_SIZE_THRESHOLDS[0]:
+        return DYNAMIC_ALPHA_SEQUENCE[0]  # 0.7
+    elif train_size < DYNAMIC_SIZE_THRESHOLDS[1]:
+        return DYNAMIC_ALPHA_SEQUENCE[1]  # 0.5
+    else:
+        return DYNAMIC_ALPHA_SEQUENCE[2]  # 0.3
+
+
 # ============================================================
 # Metrics
 # ============================================================
@@ -502,15 +499,22 @@ class StudyConfig:
 
 
 class ActiveSamplingStudy:
-    def __init__(self, df: pd.DataFrame):
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        gpr_params: Optional[Dict[str, Any]] = None,
+        create_output_dirs: bool = True,
+    ):
         self.df = df.copy()
         self.X = self.df[[CATEGORICAL_COL] + CONTINUOUS_COLS].copy()
         self.y = self.df[TARGET_COLS].values.astype(float)
         self.preprocessor = build_preprocessor(CATEGORICAL_COL, CONTINUOUS_COLS)
-        ensure_dir(OUTPUT_DIR)
-        ensure_dir(os.path.join(OUTPUT_DIR, "plots"))
-        ensure_dir(os.path.join(OUTPUT_DIR, "stop"))
-        ensure_dir(os.path.join(OUTPUT_DIR, "stop", "plots"))
+        self.gpr_params = gpr_params or {}
+        if create_output_dirs:
+            ensure_dir(OUTPUT_DIR)
+            ensure_dir(os.path.join(OUTPUT_DIR, "plots"))
+            ensure_dir(os.path.join(OUTPUT_DIR, "stop"))
+            ensure_dir(os.path.join(OUTPUT_DIR, "stop", "plots"))
 
     def _compute_r2_mean(self, pred_metrics: Dict[str, float]) -> float:
         return float(np.mean([pred_metrics[f"r2_{t}"] for t in TARGET_COLS]))
@@ -534,18 +538,33 @@ class ActiveSamplingStudy:
         return False, ""
 
     def _make_model(self, model_name: str, seed: int):
-        if model_name == "GPR":
-            return GPRMultiOutputModel(preprocessor=self.preprocessor, random_state=seed)
-        elif model_name == "MLP_ENSEMBLE":
-            return MLPEnsembleModel(
-                preprocessor=self.preprocessor,
-                ensemble_size=MLP_ENSEMBLE_SIZE,
-                hidden_layer_sizes=MLP_HIDDEN_LAYER_SIZES,
-                max_iter=MLP_MAX_ITER,
-                random_state=seed,
-            )
-        else:
+        if model_name != "GPR":
             raise ValueError(f"Unknown model_name: {model_name}")
+        return GPRMultiOutputModel(
+            preprocessor=self.preprocessor,
+            random_state=seed,
+            gpr_params=self.gpr_params,
+        )
+
+    def _get_current_alpha(
+        self,
+        strategy_name: str,
+        alpha: Optional[float],
+        iteration: int,
+        n_iterations: int,
+        train_size: int,
+    ) -> float:
+        """Determine the current alpha value based on strategy type."""
+        if strategy_name == "ue_alpha_0.5":
+            return 0.5
+        elif strategy_name == "dynamic_iter_equal":
+            return get_dynamic_alpha_iter_equal(iteration, n_iterations)
+        elif strategy_name == "dynamic_size_early":
+            return get_dynamic_alpha_size_early(train_size)
+        elif alpha is not None:
+            return float(alpha)
+        else:
+            raise ValueError(f"Cannot determine alpha for strategy: {strategy_name}")
 
     def _run_strategy(
         self,
@@ -599,11 +618,18 @@ class ActiveSamplingStudy:
                 stop_iteration = iteration
                 stop_train_size = len(train_idx)
 
+            # Get current alpha for dynamic strategies
+            current_alpha = None
+            if strategy_name != "random":
+                current_alpha = self._get_current_alpha(
+                    strategy_name, alpha, iteration, n_iterations, len(train_idx)
+                )
+
             row = asdict(
                 StudyConfig(
                     model_name=model_name,
                     strategy_name=strategy_name,
-                    alpha=alpha,
+                    alpha=current_alpha,  # Record actual alpha used
                     split_id=split_id,
                     iteration=iteration,
                     train_size=len(train_idx),
@@ -635,12 +661,13 @@ class ActiveSamplingStudy:
             if strategy_name == "random":
                 selected_global = select_batch_random(pool_remain_idx, BATCH_SIZE, rng)
             else:
+                # Use current_alpha for batch selection
                 selected_global = select_batch_uncertainty_exploitation(
                     pred_y_pool=y_pred_remain,
                     std_y_pool=y_std_remain,
                     pool_indices=pool_remain_idx,
                     batch_size=BATCH_SIZE,
-                    alpha=float(alpha),
+                    alpha=current_alpha,
                 )
 
             train_idx = np.concatenate([train_idx, selected_global])
@@ -675,24 +702,28 @@ class ActiveSamplingStudy:
             random_state=RANDOM_STATE + split_id,
         )
 
-        strategies = [("random", None)] + [(f"ue_alpha_{a}", a) for a in ALPHAS]
-        model_names = ["GPR", "MLP_ENSEMBLE"]
-
-        for model_name in model_names:
-            for strategy_name, alpha in strategies:
-                strategy_results = self._run_strategy(
-                    model_name=model_name,
-                    strategy_name=strategy_name,
-                    alpha=alpha,
-                    split_id=split_id,
-                    X_pool_full=X_pool_full,
-                    y_pool_full=y_pool_full,
-                    X_test=X_test,
-                    y_test=y_test,
-                    initial_idx=initial_idx,
-                    remaining_idx=remaining_idx,
-                )
-                results.extend(strategy_results)
+        # Strategies: random, fixed alpha 0.5, dynamic_iter_equal, dynamic_size_early
+        strategies = [
+            ("random", None),
+            ("ue_alpha_0.5", 0.5),
+            ("dynamic_iter_equal", None),
+            ("dynamic_size_early", None),
+        ]
+        model_name = "GPR"
+        for strategy_name, alpha in strategies:
+            strategy_results = self._run_strategy(
+                model_name=model_name,
+                strategy_name=strategy_name,
+                alpha=alpha,
+                split_id=split_id,
+                X_pool_full=X_pool_full,
+                y_pool_full=y_pool_full,
+                X_test=X_test,
+                y_test=y_test,
+                initial_idx=initial_idx,
+                remaining_idx=remaining_idx,
+            )
+            results.extend(strategy_results)
 
         logger.info(f"[Done] Split {split_id}/{N_SPLITS}")
         return results
@@ -745,7 +776,7 @@ class ActiveSamplingStudy:
 
         for model_name in sorted(df_results["model_name"].unique()):
             df_model = df_results[df_results["model_name"] == model_name].copy()
-            strategy_order = ["random"] + [f"ue_alpha_{a}" for a in ALPHAS]
+            strategy_order = ["random", "ue_alpha_0.5", "dynamic_iter_equal", "dynamic_size_early"]
 
             for metric in metrics_to_plot:
                 if metric not in df_model.columns:
@@ -827,7 +858,7 @@ class ActiveSamplingStudy:
         self.plot_stop_summary(df_last)
 
     def plot_stop_summary(self, df_last: pd.DataFrame):
-        strategy_order = ["random"] + [f"ue_alpha_{a}" for a in ALPHAS]
+        strategy_order = ["random", "ue_alpha_0.5", "dynamic_iter_equal", "dynamic_size_early"]
 
         for model_name in df_last["model_name"].unique():
             df_m = df_last[df_last["model_name"] == model_name].copy()
@@ -913,6 +944,78 @@ class ActiveSamplingStudy:
             plt.close()
 
 
+def get_default_gpr_params() -> Dict[str, Any]:
+    return {
+        "constant_init": 1.0,
+        "constant_low": 1e-3,
+        "constant_high": 1e3,
+        "length_scale_init": 1.0,
+        "length_scale_low": 1e-2,
+        "length_scale_high": 1e3,
+        "noise_level_init": 1e-5,
+        "n_restarts_optimizer": GPR_N_RESTARTS_OPTIMIZER,
+    }
+
+
+def optimize_gpr_hyperparameters(df: pd.DataFrame) -> Dict[str, Any]:
+    logger.info("Starting Optuna optimization for GPR hyperparameters...")
+
+    def objective(trial: optuna.trial.Trial) -> float:
+        gpr_params = {
+            "constant_init": trial.suggest_float("constant_init", 1e-2, 10.0, log=True),
+            "constant_low": 1e-3,
+            "constant_high": 1e3,
+            "length_scale_init": trial.suggest_float("length_scale_init", 1e-2, 10.0, log=True),
+            "length_scale_low": 1e-2,
+            "length_scale_high": 1e3,
+            "noise_level_init": trial.suggest_float("noise_level_init", 1e-8, 1e-2, log=True),
+            "n_restarts_optimizer": trial.suggest_int("n_restarts_optimizer", 1, 5),
+        }
+
+        runner = ActiveSamplingStudy(df, gpr_params=gpr_params, create_output_dirs=False)
+        kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+
+        rows = []
+        for split_step, (pool_idx, test_idx) in enumerate(kf.split(runner.X), start=1):
+            split_rows = runner._run_single_split(split_step, pool_idx, test_idx)
+            rows.extend(split_rows)
+
+            split_df = pd.DataFrame(rows)
+            split_last = (
+                split_df
+                .sort_values(["strategy_name", "split_id", "iteration"])
+                .groupby(["strategy_name", "split_id"])
+                .tail(1)
+            )
+            interim_score = float(split_last["regret_obj"].mean())
+            trial.report(interim_score, step=split_step)
+
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+        final_df = pd.DataFrame(rows)
+        final_last = (
+            final_df
+            .sort_values(["strategy_name", "split_id", "iteration"])
+            .groupby(["strategy_name", "split_id"])
+            .tail(1)
+        )
+        return float(final_last["regret_obj"].mean())
+
+    pruner = optuna.pruners.MedianPruner(
+        n_startup_trials=OPTUNA_PRUNER_STARTUP_TRIALS,
+        n_warmup_steps=OPTUNA_PRUNER_WARMUP_STEPS,
+    )
+    study = optuna.create_study(direction="minimize", pruner=pruner)
+    study.optimize(objective, n_trials=OPTUNA_N_TRIALS)
+
+    best = get_default_gpr_params()
+    best.update(study.best_params)
+    logger.info(f"Optuna best value (mean regret_obj): {study.best_value:.6f}")
+    logger.info(f"Optuna best params: {best}")
+    return best
+
+
 # ============================================================
 # Entry point
 # ============================================================
@@ -932,7 +1035,11 @@ if __name__ == "__main__":
     df = pd.read_csv(DATA_PATH)
     validate_dataframe(df)
 
-    study = ActiveSamplingStudy(df)
+    gpr_params = get_default_gpr_params()
+    if USE_OPTUNA_FOR_GPR:
+        gpr_params = optimize_gpr_hyperparameters(df)
+
+    study = ActiveSamplingStudy(df, gpr_params=gpr_params)
     raw_results, summary = study.run()
 
     logger.info("Study finished.")
@@ -956,10 +1063,16 @@ if __name__ == "__main__":
         "TOP_PERCENT": TOP_PERCENT,
         "TOP_K": TOP_K,
         "ALPHAS": ALPHAS,
+        "DYNAMIC_ALPHA_SEQUENCE": DYNAMIC_ALPHA_SEQUENCE,
+        "DYNAMIC_SIZE_THRESHOLDS": DYNAMIC_SIZE_THRESHOLDS,
+        "STRATEGIES": ["random", "ue_alpha_0.5", "dynamic_iter_equal", "dynamic_size_early"],
         "RANDOM_STATE": RANDOM_STATE,
-        "MLP_ENSEMBLE_SIZE": MLP_ENSEMBLE_SIZE,
-        "MLP_HIDDEN_LAYER_SIZES": MLP_HIDDEN_LAYER_SIZES,
-        "MLP_MAX_ITER": MLP_MAX_ITER,
+        "GPR_N_RESTARTS_OPTIMIZER": GPR_N_RESTARTS_OPTIMIZER,
+        "USE_OPTUNA_FOR_GPR": USE_OPTUNA_FOR_GPR,
+        "OPTUNA_N_TRIALS": OPTUNA_N_TRIALS,
+        "OPTUNA_PRUNER_STARTUP_TRIALS": OPTUNA_PRUNER_STARTUP_TRIALS,
+        "OPTUNA_PRUNER_WARMUP_STEPS": OPTUNA_PRUNER_WARMUP_STEPS,
+        "GPR_BEST_PARAMS": gpr_params,
         "USE_TARGET_STOPPING": USE_TARGET_STOPPING,
         "STOP_MIN_TRAIN_SIZE": STOP_MIN_TRAIN_SIZE,
         "STOP_TARGET_REGRET_OBJ": STOP_TARGET_REGRET_OBJ,
