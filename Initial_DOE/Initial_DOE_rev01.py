@@ -32,15 +32,15 @@ continuous_vars = {
     # "Venting_Gap": (1.0, 10.0),
     "ThermalResin_Thx": (0.5, 3.0),
     "Housing_Btm_Thx": (1, 12),
-    "SideBeam_Thx": (5, 30),
+    "SideBeam_Thx": (14, 30),
 }
 
 discrete_vars = {
     "Barrier_Type": ["Si", "Aerogel"],
     "Barrier_Outer_Type": ["Si", "Aerogel"],
     # "Cooling_Loc": ["Top", "Bottom"],
-    "Heater_Type" : ["Small", "Medium"],
-    "Heater_Loc" : ["Center", "DSF", "Lead"],
+    # "Heater_Type" : ["Small", "Medium"],
+    # "Heater_Loc" : ["Center", "DSF", "Lead"],
     "Cell/Barrier": [1, 2],
 }
 
@@ -53,8 +53,13 @@ seed_max = 100000
 weight_A = 0.7   # min_over_groups_min_distance
 weight_B = 0.3   # global_mean_nn_distance
 
-stop_A_threshold = 0.7
-stop_score_threshold = 0.56
+# seed 탐색 조기종료 설정 (patience 기반)
+early_stop_warmup_trials = 80
+early_stop_patience = 120
+early_stop_min_delta = 1e-6
+
+# greedy 배정 후 swap 국소개선 반복 횟수
+local_swap_iterations = 60
 
 
 
@@ -153,6 +158,40 @@ def greedy_maximin_assignment(X_unit, n_groups, group_size, seed):
     return groups
 
 
+def clone_groups(groups):
+    return [group.copy() for group in groups]
+
+
+def local_swap_refinement(X_unit, groups, seed, n_iterations):
+    rng = np.random.default_rng(seed + 2026)
+
+    best_groups = clone_groups(groups)
+    best_A, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+
+    for _ in range(n_iterations):
+        g1, g2 = rng.choice(len(best_groups), size=2, replace=False)
+
+        i1 = int(rng.integers(0, len(best_groups[g1])))
+        i2 = int(rng.integers(0, len(best_groups[g2])))
+
+        best_groups[g1][i1], best_groups[g2][i2] = (
+            best_groups[g2][i2],
+            best_groups[g1][i1]
+        )
+
+        candidate_A, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+
+        if candidate_A > best_A:
+            best_A = candidate_A
+        else:
+            best_groups[g1][i1], best_groups[g2][i2] = (
+                best_groups[g2][i2],
+                best_groups[g1][i1]
+            )
+
+    return best_groups
+
+
 # =========================================================
 # 3. DOE 품질 지표 계산 함수
 # =========================================================
@@ -213,6 +252,13 @@ def evaluate_seed(seed):
         seed=seed
     )
 
+    groups = local_swap_refinement(
+        X_unit=X_unit,
+        groups=groups,
+        seed=seed,
+        n_iterations=local_swap_iterations
+    )
+
     min_over_groups, mean_group_min = calculate_min_over_groups_min_distance(
         X_unit,
         groups
@@ -256,23 +302,45 @@ def stop_when_target_reached(study, trial):
     if trial.state != optuna.trial.TrialState.COMPLETE:
         return
 
-    A = trial.user_attrs.get("min_over_groups_min_distance")
     score = trial.user_attrs.get("score", trial.value)
 
-    if A is None or score is None:
+    if score is None:
         return
+
+    state = study.user_attrs.get("early_stop_state")
+    if state is None:
+        state = {
+            "best_score": -np.inf,
+            "best_trial_number": -1,
+            "last_improvement_trial": -1,
+        }
+
+    if score > state["best_score"] + early_stop_min_delta:
+        state["best_score"] = score
+        state["best_trial_number"] = trial.number
+        state["last_improvement_trial"] = trial.number
+
+    study.set_user_attr("early_stop_state", state)
 
     best_trial = study.best_trial
     best_A = best_trial.user_attrs.get("min_over_groups_min_distance")
     best_B = best_trial.user_attrs.get("global_mean_nn_distance")
+    no_improve_trials = trial.number - state["last_improvement_trial"]
 
     print(
         f"Trial {trial.number} finished, "
         f"현재 Best trial {best_trial.number}: "
-        f"A={best_A:.6f}, B={best_B:.6f}, Score={best_trial.value:.6f}"
+        f"A={best_A:.6f}, B={best_B:.6f}, Score={best_trial.value:.6f}, "
+        f"NoImprove={no_improve_trials}/{early_stop_patience}"
     )
 
-    if A > stop_A_threshold or score > stop_score_threshold:
+    if (
+        trial.number + 1 >= early_stop_warmup_trials
+        and no_improve_trials >= early_stop_patience
+    ):
+        print(
+            f"조기 종료: 최근 {no_improve_trials}회 동안 score 개선이 없어 탐색을 종료합니다."
+        )
         study.stop()
 
 
@@ -309,6 +377,13 @@ def build_initial_doe(
         seed=seed
     )
 
+    groups = local_swap_refinement(
+        X_unit=X_unit,
+        groups=groups,
+        seed=seed,
+        n_iterations=local_swap_iterations
+    )
+
     rows = []
 
     for disc_idx, sample_indices in enumerate(groups):
@@ -342,7 +417,7 @@ def build_initial_doe(
 # 6. 시각화 함수
 # =========================================================
 
-def plot_score_contour(df_trials):
+def plot_score_contour(df_trials, save_path=None):
     A_col = "min_over_groups_min_distance"
     B_col = "global_mean_nn_distance"
 
@@ -406,10 +481,14 @@ def plot_score_contour(df_trials):
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    # plt.show()
 
 
-def plot_group_min_distance_bar(X_unit_best, groups_best):
+def plot_group_min_distance_bar(X_unit_best, groups_best, save_path=None):
     df_group_dist = calculate_group_min_distances(
         X_unit_best,
         groups_best
@@ -445,7 +524,11 @@ def plot_group_min_distance_bar(X_unit_best, groups_best):
     plt.legend()
     plt.grid(True, axis="y", alpha=0.3)
     plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    # plt.show()
 
     return df_group_dist
 
@@ -530,6 +613,8 @@ result_dir = create_trial_result_dir(trials_dir, best_A, best_score)
 output_csv_path = result_dir / output_csv
 optuna_result_csv_path = result_dir / optuna_result_csv
 group_distance_csv_path = result_dir / group_distance_csv
+contour_plot_path = result_dir / "seed_optimization_contour.png"
+group_bar_plot_path = result_dir / "group_min_distance_bar.png"
 
 print(f"\n결과 저장 폴더: {result_dir}")
 
@@ -564,11 +649,12 @@ print(df_doe.head())
 
 
 # 시각화 실행
-plot_score_contour(df_trials)
+plot_score_contour(df_trials, save_path=contour_plot_path)
 
 df_group_dist = plot_group_min_distance_bar(
     X_unit_best,
-    groups_best
+    groups_best,
+    save_path=group_bar_plot_path
 )
 
 df_group_dist.to_csv(
@@ -578,4 +664,6 @@ df_group_dist.to_csv(
 )
 
 print(f"\n조합별 minimum distance 저장 완료: {group_distance_csv_path}")
+print(f"Contour plot 저장 완료: {contour_plot_path}")
+print(f"Group bar plot 저장 완료: {group_bar_plot_path}")
 print(df_group_dist.head())
