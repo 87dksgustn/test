@@ -1,0 +1,4 @@
+Trials/
+__pycache__/
+*.pyc
+.venv/
