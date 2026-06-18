@@ -27,12 +27,12 @@ continuous_vars = {
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
     "Barrier_Thx": (0.5, 3.0),
-    "Barrier_Outer_Thx": (0.5, 3.0),
+    "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
-    "ThermalResin_Thx": (0.5, 3.0),
-    "Housing_Btm_Thx": (1, 12),
-    "SideBeam_Thx": (14, 30),
+    # "ThermalResin_Thx": (0.5, 3.0),
+    # "Housing_Btm_Thx": (1, 12),
+    # "SideBeam_Thx": (14, 30),
 }
 
 discrete_vars = {
@@ -533,23 +533,11 @@ def plot_group_min_distance_bar(X_unit_best, groups_best, save_path=None):
     return df_group_dist
 
 
-def create_trial_result_dir(trials_dir, A, score):
+def create_trial_result_dir(trials_dir, A, B, score):
     trials_dir.mkdir(exist_ok=True)
 
-    existing_numbers = []
-
-    for path in trials_dir.iterdir():
-        if not path.is_dir():
-            continue
-
-        number_part = path.name.split("_", 1)[0]
-
-        if number_part.isdigit():
-            existing_numbers.append(int(number_part))
-
-    next_number = max(existing_numbers, default=0) + 1
-    result_dir = trials_dir / f"{next_number}_{A:.6f}_{score:.6f}"
-    result_dir.mkdir()
+    result_dir = trials_dir / f"{A:.6f}_{B:.6f}_{score:.6f}"
+    result_dir.mkdir(exist_ok=True)
 
     return result_dir
 
@@ -594,6 +582,7 @@ df_trials = df_trials.sort_values(
 
 best_seed = int(df_trials.loc[0, "seed"])
 best_A = df_trials.loc[0, A_col]
+best_B = df_trials.loc[0, B_col]
 best_score = df_trials.loc[0, score_col]
 
 
@@ -609,7 +598,7 @@ print(f"global_mean_nn_distance: {df_trials.loc[0, B_col]:.6f}")
 print(f"mean_group_min_distance: {df_trials.loc[0, 'mean_group_min_distance']:.6f}")
 
 
-result_dir = create_trial_result_dir(trials_dir, best_A, best_score)
+result_dir = create_trial_result_dir(trials_dir, best_A, best_B, best_score)
 output_csv_path = result_dir / output_csv
 optuna_result_csv_path = result_dir / optuna_result_csv
 group_distance_csv_path = result_dir / group_distance_csv
