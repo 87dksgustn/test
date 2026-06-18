@@ -36,8 +36,8 @@ continuous_vars = {
 }
 
 discrete_vars = {
-    "Barrier_Type": ["Si", "Aerogel"],
-    "Barrier_Outer_Type": ["Si", "Aerogel"],
+    "Barrier_Type": ["Si1", "Si2", "Si3","Aerogel1", "Aerogel2"],
+    "Barrier_Outer_Type": ["PU", "Si1", "Si2", "Si3"],
     # "Cooling_Loc": ["Top", "Bottom"],
     # "Heater_Type" : ["Small", "Medium"],
     # "Heater_Loc" : ["Center", "DSF", "Lead"],
@@ -50,8 +50,8 @@ n_trials = 300
 seed_min = 0
 seed_max = 100000
 
-weight_A = 0.7   # min_over_groups_min_distance
-weight_B = 0.3   # global_mean_nn_distance
+weight_A = 0.5   # min_over_groups_min_distance
+weight_B = 0.5   # mean_group_min_distance
 
 # seed 탐색 조기종료 설정 (patience 기반)
 early_stop_warmup_trials = 80
@@ -284,14 +284,15 @@ def objective(trial):
     result = evaluate_seed(seed)
 
     A = result["min_over_groups_min_distance"]
-    B = result["global_mean_nn_distance"]
+    B = result["mean_group_min_distance"]  # 변경: global_mean_nn → mean_group_min
 
     trial.set_user_attr("seed", seed)
     trial.set_user_attr("min_over_groups_min_distance", A)
-    trial.set_user_attr("mean_group_min_distance", result["mean_group_min_distance"])
-    trial.set_user_attr("global_mean_nn_distance", B)
+    trial.set_user_attr("mean_group_min_distance", B)
+    trial.set_user_attr("global_mean_nn_distance", result["global_mean_nn_distance"])
 
     # Optuna 탐색 및 최종 best seed 선정에 사용하는 통합 score
+    # A: worst case 보호, B: 전체 그룹 평균 품질
     score = weight_A * A + weight_B * B
     trial.set_user_attr("score", score)
 
@@ -324,13 +325,13 @@ def stop_when_target_reached(study, trial):
 
     best_trial = study.best_trial
     best_A = best_trial.user_attrs.get("min_over_groups_min_distance")
-    best_B = best_trial.user_attrs.get("global_mean_nn_distance")
+    best_B = best_trial.user_attrs.get("mean_group_min_distance")
     no_improve_trials = trial.number - state["last_improvement_trial"]
 
     print(
         f"Trial {trial.number} finished, "
         f"현재 Best trial {best_trial.number}: "
-        f"A={best_A:.6f}, B={best_B:.6f}, Score={best_trial.value:.6f}, "
+        f"A(min)={best_A:.6f}, B(mean)={best_B:.6f}, Score={best_trial.value:.6f}, "
         f"NoImprove={no_improve_trials}/{early_stop_patience}"
     )
 
@@ -419,7 +420,7 @@ def build_initial_doe(
 
 def plot_score_contour(df_trials, save_path=None):
     A_col = "min_over_groups_min_distance"
-    B_col = "global_mean_nn_distance"
+    B_col = "mean_group_min_distance"  # 변경: global_mean_nn → mean_group_min
 
     A = df_trials[A_col].values
     B = df_trials[B_col].values
@@ -475,9 +476,9 @@ def plot_score_contour(df_trials, save_path=None):
         label=f"Best Seed = {int(df_trials.iloc[best_pos]['seed'])}"
     )
 
-    plt.xlabel("B_norm: global_mean_nn_distance")
+    plt.xlabel("B_norm: mean_group_min_distance")
     plt.ylabel("A_norm: min_over_groups_min_distance")
-    plt.title("DOE Seed 최적화 Contour Plot")
+    plt.title("DOE Seed 최적화 Contour Plot (A:min + B:mean)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -572,7 +573,7 @@ df_trials = pd.DataFrame(trial_results)
 
 # Score 기준 best seed 선정
 A_col = "min_over_groups_min_distance"
-B_col = "global_mean_nn_distance"
+B_col = "mean_group_min_distance"  # 변경: global_mean_nn → mean_group_min
 score_col = "score"
 
 df_trials = df_trials.sort_values(
@@ -588,14 +589,14 @@ best_score = df_trials.loc[0, score_col]
 
 print("\nOptuna seed 최적화 완료")
 print(f"Best seed by Score: {best_seed}")
-print(f"A: {best_A:.6f}")
-print(f"B: {df_trials.loc[0, B_col]:.6f}")
+print(f"A (min_over_groups): {best_A:.6f}")
+print(f"B (mean_group_min): {best_B:.6f}")
 print(f"Score: {best_score:.6f}")
 
 print("\nBest seed DOE 품질 지표")
 print(f"min_over_groups_min_distance: {best_A:.6f}")
-print(f"global_mean_nn_distance: {df_trials.loc[0, B_col]:.6f}")
-print(f"mean_group_min_distance: {df_trials.loc[0, 'mean_group_min_distance']:.6f}")
+print(f"mean_group_min_distance: {best_B:.6f}")
+print(f"global_mean_nn_distance: {df_trials.loc[0, 'global_mean_nn_distance']:.6f}")
 
 
 result_dir = create_trial_result_dir(trials_dir, best_A, best_B, best_score)
