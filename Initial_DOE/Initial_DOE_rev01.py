@@ -50,8 +50,8 @@ n_trials = 300
 seed_min = 0
 seed_max = 100000
 
-weight_A = 0.7   # min_over_groups_min_distance
-weight_B = 0.3   # global_mean_nn_distance
+weight_A = 0.6   # min_over_groups_min_distance
+weight_B = 0.4   # group_min_distance_q10 (하위 10% 분위수)
 
 # seed 탐색 조기종료 설정 (patience 기반)
 early_stop_warmup_trials = 80
@@ -166,7 +166,7 @@ def local_swap_refinement(X_unit, groups, seed, n_iterations):
     rng = np.random.default_rng(seed + 2026)
 
     best_groups = clone_groups(groups)
-    best_A, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+    best_A, _, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
 
     for _ in range(n_iterations):
         g1, g2 = rng.choice(len(best_groups), size=2, replace=False)
@@ -179,7 +179,7 @@ def local_swap_refinement(X_unit, groups, seed, n_iterations):
             best_groups[g1][i1]
         )
 
-        candidate_A, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+        candidate_A, _, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
 
         if candidate_A > best_A:
             best_A = candidate_A
@@ -220,8 +220,9 @@ def calculate_min_over_groups_min_distance(X_unit, groups):
 
     min_over_groups = df_group_dist["group_min_distance"].min()
     mean_group_min = df_group_dist["group_min_distance"].mean()
+    q10_group_min = df_group_dist["group_min_distance"].quantile(0.1)
 
-    return min_over_groups, mean_group_min
+    return min_over_groups, mean_group_min, q10_group_min
 
 
 def calculate_global_mean_nn_distance(X_unit):
@@ -259,7 +260,7 @@ def evaluate_seed(seed):
         n_iterations=local_swap_iterations
     )
 
-    min_over_groups, mean_group_min = calculate_min_over_groups_min_distance(
+    min_over_groups, mean_group_min, q10_group_min = calculate_min_over_groups_min_distance(
         X_unit,
         groups
     )
@@ -270,6 +271,7 @@ def evaluate_seed(seed):
         "seed": seed,
         "min_over_groups_min_distance": min_over_groups,
         "mean_group_min_distance": mean_group_min,
+        "group_min_distance_q10": q10_group_min,
         "global_mean_nn_distance": global_mean_nn,
     }
 
@@ -284,15 +286,17 @@ def objective(trial):
     result = evaluate_seed(seed)
 
     A = result["min_over_groups_min_distance"]
-    B = result["global_mean_nn_distance"]
+    q10 = result["group_min_distance_q10"]
 
     trial.set_user_attr("seed", seed)
     trial.set_user_attr("min_over_groups_min_distance", A)
+    trial.set_user_attr("group_min_distance_q10", q10)
     trial.set_user_attr("mean_group_min_distance", result["mean_group_min_distance"])
-    trial.set_user_attr("global_mean_nn_distance", B)
+    trial.set_user_attr("global_mean_nn_distance", result["global_mean_nn_distance"])
 
     # Optuna 탐색 및 최종 best seed 선정에 사용하는 통합 score
-    score = weight_A * A + weight_B * B
+    # A: 최악 조합 방지, q10: 하위권 조합 전반 품질 확인
+    score = weight_A * A + weight_B * q10
     trial.set_user_attr("score", score)
 
     return score
@@ -324,13 +328,13 @@ def stop_when_target_reached(study, trial):
 
     best_trial = study.best_trial
     best_A = best_trial.user_attrs.get("min_over_groups_min_distance")
-    best_B = best_trial.user_attrs.get("global_mean_nn_distance")
+    best_q10 = best_trial.user_attrs.get("group_min_distance_q10")
     no_improve_trials = trial.number - state["last_improvement_trial"]
 
     print(
         f"Trial {trial.number} finished, "
         f"현재 Best trial {best_trial.number}: "
-        f"A={best_A:.6f}, B={best_B:.6f}, Score={best_trial.value:.6f}, "
+        f"A(min)={best_A:.6f}, q10={best_q10:.6f}, Score={best_trial.value:.6f}, "
         f"NoImprove={no_improve_trials}/{early_stop_patience}"
     )
 
@@ -419,23 +423,23 @@ def build_initial_doe(
 
 def plot_score_contour(df_trials, save_path=None):
     A_col = "min_over_groups_min_distance"
-    B_col = "global_mean_nn_distance"
+    q10_col = "group_min_distance_q10"
 
     A = df_trials[A_col].values
-    B = df_trials[B_col].values
+    q10 = df_trials[q10_col].values
 
     A_min, A_max = A.min(), A.max()
-    B_min, B_max = B.min(), B.max()
+    q10_min, q10_max = q10.min(), q10.max()
 
     A_norm = (
         (A - A_min) / (A_max - A_min)
         if A_max > A_min else np.ones_like(A)
     )
-    B_norm = (
-        (B - B_min) / (B_max - B_min)
-        if B_max > B_min else np.ones_like(B)
+    q10_norm = (
+        (q10 - q10_min) / (q10_max - q10_min)
+        if q10_max > q10_min else np.ones_like(q10)
     )
-    normalized_score = weight_A * A_norm + weight_B * B_norm
+    normalized_score = weight_A * A_norm + weight_B * q10_norm
 
     x_grid = np.linspace(0, 1, 100)
     y_grid = np.linspace(0, 1, 100)
@@ -457,7 +461,7 @@ def plot_score_contour(df_trials, save_path=None):
     plt.colorbar(contour, label="Normalized Score")
 
     plt.scatter(
-        B_norm,
+        q10_norm,
         A_norm,
         c=normalized_score,
         edgecolors="black",
@@ -467,7 +471,7 @@ def plot_score_contour(df_trials, save_path=None):
     best_pos = 0
 
     plt.scatter(
-        B_norm[best_pos],
+        q10_norm[best_pos],
         A_norm[best_pos],
         marker="*",
         s=250,
@@ -475,9 +479,9 @@ def plot_score_contour(df_trials, save_path=None):
         label=f"Best Seed = {int(df_trials.iloc[best_pos]['seed'])}"
     )
 
-    plt.xlabel("B_norm: global_mean_nn_distance")
+    plt.xlabel("q10_norm: group_min_distance_q10")
     plt.ylabel("A_norm: min_over_groups_min_distance")
-    plt.title("DOE Seed 최적화 Contour Plot")
+    plt.title("DOE Seed 최적화 Contour Plot (0.6A + 0.4q10)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -563,8 +567,9 @@ for trial in study.trials:
         "seed": trial.params.get("seed"),
         "score": trial.value,
         "min_over_groups_min_distance": trial.user_attrs.get("min_over_groups_min_distance"),
-        "global_mean_nn_distance": trial.user_attrs.get("global_mean_nn_distance"),
+        "group_min_distance_q10": trial.user_attrs.get("group_min_distance_q10"),
         "mean_group_min_distance": trial.user_attrs.get("mean_group_min_distance"),
+        "global_mean_nn_distance": trial.user_attrs.get("global_mean_nn_distance"),
     })
 
 df_trials = pd.DataFrame(trial_results)
@@ -572,7 +577,7 @@ df_trials = pd.DataFrame(trial_results)
 
 # Score 기준 best seed 선정
 A_col = "min_over_groups_min_distance"
-B_col = "global_mean_nn_distance"
+q10_col = "group_min_distance_q10"
 score_col = "score"
 
 df_trials = df_trials.sort_values(
@@ -582,23 +587,24 @@ df_trials = df_trials.sort_values(
 
 best_seed = int(df_trials.loc[0, "seed"])
 best_A = df_trials.loc[0, A_col]
-best_B = df_trials.loc[0, B_col]
+best_q10 = df_trials.loc[0, q10_col]
 best_score = df_trials.loc[0, score_col]
 
 
 print("\nOptuna seed 최적화 완료")
 print(f"Best seed by Score: {best_seed}")
-print(f"A: {best_A:.6f}")
-print(f"B: {df_trials.loc[0, B_col]:.6f}")
+print(f"A (min_over_groups): {best_A:.6f}")
+print(f"q10 (하위 10%): {best_q10:.6f}")
 print(f"Score: {best_score:.6f}")
 
 print("\nBest seed DOE 품질 지표")
 print(f"min_over_groups_min_distance: {best_A:.6f}")
-print(f"global_mean_nn_distance: {df_trials.loc[0, B_col]:.6f}")
+print(f"group_min_distance_q10: {best_q10:.6f}")
 print(f"mean_group_min_distance: {df_trials.loc[0, 'mean_group_min_distance']:.6f}")
+print(f"global_mean_nn_distance: {df_trials.loc[0, 'global_mean_nn_distance']:.6f}")
 
 
-result_dir = create_trial_result_dir(trials_dir, best_A, best_B, best_score)
+result_dir = create_trial_result_dir(trials_dir, best_A, best_q10, best_score)
 output_csv_path = result_dir / output_csv
 optuna_result_csv_path = result_dir / optuna_result_csv
 group_distance_csv_path = result_dir / group_distance_csv
