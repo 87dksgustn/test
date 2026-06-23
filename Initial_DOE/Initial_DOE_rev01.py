@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 from itertools import product
 from pathlib import Path
 from scipy.stats import qmc
@@ -30,14 +31,22 @@ continuous_vars = {
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
-    # "ThermalResin_Thx": (0.5, 3.0),
+    "ThermalResin_Thx": (0.5, 3.0),
     # "Housing_Btm_Thx": (1, 12),
     # "SideBeam_Thx": (14, 30),
 }
 
+# 기준값(center) 주변 +/- min_delta 구간은 샘플링에서 제외
+continuous_exclusion_windows = {
+    "Cell_D": {"center": 12.4, "min_delta": 0.01},
+    "Barrier_Thx": {"center": 0.85, "min_delta": 0.01},
+    "Barrier_Outer_Thx": {"center": 2.0, "min_delta": 0.01},
+    "ThermalResin_Thx": {"center": 1.0, "min_delta": 0.01},
+}
+
 discrete_vars = {
-    "Barrier_Type": ["Si", "Aerogel"],
-    "Barrier_Outer_Type": ["Si", "Aerogel"],
+    "Barrier_Type": ["Si1", "Si2", "Si3","Aerogel1", "Aerogel2"],
+    "Barrier_Outer_Type": ["PU", "Si1", "Si2", "Si3"],
     # "Cooling_Loc": ["Top", "Bottom"],
     # "Heater_Type" : ["Small", "Medium"],
     # "Heater_Loc" : ["Center", "DSF", "Lead"],
@@ -60,6 +69,9 @@ early_stop_min_delta = 1e-6
 
 # greedy 배정 후 swap 국소개선 반복 횟수
 local_swap_iterations = 60
+
+# Optuna 병렬 trial 실행 수 (-1: 사용 가능한 모든 코어)
+optuna_n_jobs = -1
 
 
 
@@ -84,11 +96,62 @@ def generate_lhs_samples(continuous_vars, n_samples, seed):
 
     X_unit = sampler.random(n=n_samples)
 
-    X_scaled = qmc.scale(
-        X_unit,
-        bounds[:, 0],
-        bounds[:, 1]
-    )
+    X_scaled = np.zeros_like(X_unit)
+
+    for col_idx, var_name in enumerate(var_names):
+        lower, upper = bounds[col_idx]
+        unit_col = X_unit[:, col_idx]
+
+        exclusion = continuous_exclusion_windows.get(var_name)
+        if exclusion is None:
+            X_scaled[:, col_idx] = qmc.scale(
+                unit_col,
+                lower,
+                upper
+            )
+            continue
+
+        center = float(exclusion["center"])
+        min_delta = float(exclusion["min_delta"])
+        left_end = center - min_delta
+        right_start = center + min_delta
+
+        if not (lower <= left_end and right_start <= upper):
+            raise ValueError(
+                f"{var_name} exclusion window가 범위를 벗어났습니다: "
+                f"range=({lower}, {upper}), exclusion=({left_end}, {right_start})"
+            )
+
+        left_len = left_end - lower
+        right_len = upper - right_start
+        allowed_total = left_len + right_len
+
+        if allowed_total <= 0:
+            raise ValueError(
+                f"{var_name}에서 exclusion window 적용 후 샘플링 가능한 구간이 없습니다."
+            )
+
+        if left_len <= 0:
+            X_scaled[:, col_idx] = right_start + unit_col * right_len
+            continue
+
+        if right_len <= 0:
+            X_scaled[:, col_idx] = lower + unit_col * left_len
+            continue
+
+        left_ratio = left_len / allowed_total
+        left_mask = unit_col < left_ratio
+        right_mask = ~left_mask
+
+        if np.any(left_mask):
+            X_scaled[left_mask, col_idx] = lower + (
+                unit_col[left_mask] / left_ratio
+            ) * left_len
+
+        if np.any(right_mask):
+            X_scaled[right_mask, col_idx] = right_start + (
+                (unit_col[right_mask] - left_ratio) / (1.0 - left_ratio)
+            ) * right_len
 
     df_cont = pd.DataFrame(X_scaled, columns=var_names)
 
@@ -104,10 +167,24 @@ def generate_discrete_combinations(discrete_vars):
     return pd.DataFrame(combinations, columns=var_names)
 
 
-def greedy_maximin_assignment(X_unit, n_groups, group_size, seed):
+def compute_distance_matrix(X_unit):
+    distances = pairwise_distances(X_unit, X_unit, metric="euclidean")
+    np.fill_diagonal(distances, np.inf)
+    return distances
+
+
+def compute_group_min_distance(distance_matrix, group):
+    if len(group) < 2:
+        return np.inf
+
+    group_distances = distance_matrix[np.ix_(group, group)]
+    return np.min(group_distances)
+
+
+def greedy_maximin_assignment(distance_matrix, n_groups, group_size, seed):
     rng = np.random.default_rng(seed)
 
-    n_samples = X_unit.shape[0]
+    n_samples = distance_matrix.shape[0]
 
     if n_samples != n_groups * group_size:
         raise ValueError(
@@ -132,22 +209,12 @@ def greedy_maximin_assignment(X_unit, n_groups, group_size, seed):
         best_group = None
         best_score = -np.inf
 
-        x_candidate = X_unit[idx].reshape(1, -1)
-
         for g in range(n_groups):
 
             if len(groups[g]) >= group_size:
                 continue
 
-            group_points = X_unit[groups[g]]
-
-            distances = pairwise_distances(
-                x_candidate,
-                group_points,
-                metric="euclidean"
-            )
-
-            min_distance_to_group = np.min(distances)
+            min_distance_to_group = np.min(distance_matrix[idx, groups[g]])
 
             if min_distance_to_group > best_score:
                 best_score = min_distance_to_group
@@ -162,11 +229,15 @@ def clone_groups(groups):
     return [group.copy() for group in groups]
 
 
-def local_swap_refinement(X_unit, groups, seed, n_iterations):
+def local_swap_refinement(distance_matrix, groups, seed, n_iterations):
     rng = np.random.default_rng(seed + 2026)
 
     best_groups = clone_groups(groups)
-    best_A, _, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+    group_min_distances = np.array([
+        compute_group_min_distance(distance_matrix, group)
+        for group in best_groups
+    ], dtype=float)
+    best_A = np.min(group_min_distances)
 
     for _ in range(n_iterations):
         g1, g2 = rng.choice(len(best_groups), size=2, replace=False)
@@ -179,10 +250,20 @@ def local_swap_refinement(X_unit, groups, seed, n_iterations):
             best_groups[g1][i1]
         )
 
-        candidate_A, _, _ = calculate_min_over_groups_min_distance(X_unit, best_groups)
+        updated_g1_min = compute_group_min_distance(distance_matrix, best_groups[g1])
+        updated_g2_min = compute_group_min_distance(distance_matrix, best_groups[g2])
+
+        if len(group_min_distances) <= 2:
+            unaffected_min = np.inf
+        else:
+            unaffected_min = np.min(np.delete(group_min_distances, [g1, g2]))
+
+        candidate_A = min(unaffected_min, updated_g1_min, updated_g2_min)
 
         if candidate_A > best_A:
             best_A = candidate_A
+            group_min_distances[g1] = updated_g1_min
+            group_min_distances[g2] = updated_g2_min
         else:
             best_groups[g1][i1], best_groups[g2][i2] = (
                 best_groups[g2][i2],
@@ -196,16 +277,14 @@ def local_swap_refinement(X_unit, groups, seed, n_iterations):
 # 3. DOE 품질 지표 계산 함수
 # =========================================================
 
-def calculate_group_min_distances(X_unit, groups):
+def calculate_group_min_distances(X_unit, groups, distance_matrix=None):
+    if distance_matrix is None:
+        distance_matrix = compute_distance_matrix(X_unit)
+
     group_min_distances = []
 
     for group_id, group in enumerate(groups, start=1):
-        X_group = X_unit[group]
-
-        distances = pairwise_distances(X_group, X_group)
-        distances[distances == 0] = np.inf
-
-        min_distance = np.min(distances)
+        min_distance = compute_group_min_distance(distance_matrix, group)
 
         group_min_distances.append({
             "discrete_combination_id": group_id,
@@ -215,8 +294,12 @@ def calculate_group_min_distances(X_unit, groups):
     return pd.DataFrame(group_min_distances)
 
 
-def calculate_min_over_groups_min_distance(X_unit, groups):
-    df_group_dist = calculate_group_min_distances(X_unit, groups)
+def calculate_min_over_groups_min_distance(X_unit, groups, distance_matrix=None):
+    df_group_dist = calculate_group_min_distances(
+        X_unit,
+        groups,
+        distance_matrix=distance_matrix
+    )
 
     min_over_groups = df_group_dist["group_min_distance"].min()
     mean_group_min = df_group_dist["group_min_distance"].mean()
@@ -225,11 +308,11 @@ def calculate_min_over_groups_min_distance(X_unit, groups):
     return min_over_groups, mean_group_min, q10_group_min
 
 
-def calculate_global_mean_nn_distance(X_unit):
-    distances = pairwise_distances(X_unit, X_unit)
-    distances[distances == 0] = np.inf
+def calculate_global_mean_nn_distance(X_unit, distance_matrix=None):
+    if distance_matrix is None:
+        distance_matrix = compute_distance_matrix(X_unit)
 
-    nearest_distances = np.min(distances, axis=1)
+    nearest_distances = np.min(distance_matrix, axis=1)
 
     return np.mean(nearest_distances)
 
@@ -246,15 +329,17 @@ def evaluate_seed(seed):
         seed=seed
     )
 
+    distance_matrix = compute_distance_matrix(X_unit)
+
     groups = greedy_maximin_assignment(
-        X_unit=X_unit,
+        distance_matrix=distance_matrix,
         n_groups=n_groups,
         group_size=samples_per_discrete_combination,
         seed=seed
     )
 
     groups = local_swap_refinement(
-        X_unit=X_unit,
+        distance_matrix=distance_matrix,
         groups=groups,
         seed=seed,
         n_iterations=local_swap_iterations
@@ -262,10 +347,14 @@ def evaluate_seed(seed):
 
     min_over_groups, mean_group_min, q10_group_min = calculate_min_over_groups_min_distance(
         X_unit,
-        groups
+        groups,
+        distance_matrix=distance_matrix
     )
 
-    global_mean_nn = calculate_global_mean_nn_distance(X_unit)
+    global_mean_nn = calculate_global_mean_nn_distance(
+        X_unit,
+        distance_matrix=distance_matrix
+    )
 
     return {
         "seed": seed,
@@ -374,15 +463,17 @@ def build_initial_doe(
         seed=seed
     )
 
+    distance_matrix = compute_distance_matrix(X_unit)
+
     groups = greedy_maximin_assignment(
-        X_unit=X_unit,
+        distance_matrix=distance_matrix,
         n_groups=n_discrete_combinations,
         group_size=samples_per_discrete_combination,
         seed=seed
     )
 
     groups = local_swap_refinement(
-        X_unit=X_unit,
+        distance_matrix=distance_matrix,
         groups=groups,
         seed=seed,
         n_iterations=local_swap_iterations
@@ -554,6 +645,7 @@ study = optuna.create_study(direction="maximize")
 study.optimize(
     objective,
     n_trials=n_trials,
+    n_jobs=optuna_n_jobs,
     callbacks=[stop_when_target_reached]
 )
 
