@@ -53,7 +53,7 @@ discrete_vars = {
     "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 7
+samples_per_discrete_combination = 6
 
 n_trials = 300
 seed_min = 0
@@ -163,6 +163,27 @@ def generate_discrete_combinations(discrete_vars):
     levels = list(discrete_vars.values())
 
     combinations = list(product(*levels))
+
+    si_types = {"Si1", "Si2", "Si3"}
+    barrier_key = "Barrier_Type"
+    outer_key = "Barrier_Outer_Type"
+
+    if barrier_key in var_names and outer_key in var_names:
+        barrier_idx = var_names.index(barrier_key)
+        outer_idx = var_names.index(outer_key)
+
+        filtered_combinations = []
+        for combo in combinations:
+            barrier_type = combo[barrier_idx]
+            outer_type = combo[outer_idx]
+
+            # 둘 다 Si 계열일 때만 동일 타입을 강제
+            if (barrier_type in si_types and outer_type in si_types) and (barrier_type != outer_type):
+                continue
+
+            filtered_combinations.append(combo)
+
+        combinations = filtered_combinations
 
     return pd.DataFrame(combinations, columns=var_names)
 
@@ -631,7 +652,7 @@ def plot_group_min_distance_bar(X_unit_best, groups_best, save_path=None):
 def create_trial_result_dir(trials_dir, A, B, score):
     trials_dir.mkdir(exist_ok=True)
 
-    result_dir = trials_dir / f"{A:.6f}_{B:.6f}_{score:.6f}"
+    result_dir = trials_dir / f"{score:.6f}_{A:.6f}_{B:.6f}"
     result_dir.mkdir(exist_ok=True)
 
     return result_dir
