@@ -27,7 +27,7 @@ continuous_vars = {
     # "Cell_H": (300, 600),
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
-    "Barrier_Thx": (0.5, 3.0),
+    "Barrier_Thx": (0.5, 2.1),
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
@@ -53,7 +53,7 @@ discrete_vars = {
     "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 6
+samples_per_discrete_combination = 8
 
 n_trials = 300
 seed_min = 0
