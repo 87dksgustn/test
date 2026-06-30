@@ -91,7 +91,7 @@ UNCERTAINTY_SPARSE_WEIGHTS = {
 PASS_WINDOW_LOW = 0.60
 PASS_WINDOW_HIGH = 0.90
 PASS_WINDOW_CENTER = 0.75
-MIN_BATCH_DISTANCE = 0.02
+MIN_BATCH_DISTANCE = 0.15
 
 # ============================================================
 # Model selection
