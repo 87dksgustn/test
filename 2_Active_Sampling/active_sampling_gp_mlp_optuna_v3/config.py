@@ -6,8 +6,8 @@ from pathlib import Path
 
 INPUT_CSV = "initial_dataset.csv"
 
-CONTINUOUS_COLS = ["x1", "x2", "x3", "x4"]
-DISCRETE_COLS = ["disc1", "disc2", "disc3"]
+CONTINUOUS_COLS = ["Cell_D", "Barrier_Thx", "Barrier_Outer_Thx", "ThermalResin_Thx"]
+DISCRETE_COLS = ["Barrier_Type", "Barrier_Outer_type", "Cell_Barrier"]
 
 PASSFAIL_COL = "pass_fail"   # PASS=0, FAIL=1
 TMAX_COL = "tmax"            # Valid mainly for PASS cases
@@ -21,24 +21,24 @@ PASS_LABEL = 0
 FAIL_LABEL = 1
 
 CONTINUOUS_BOUNDS = {
-    "x1": (8.0, 16.0),
-    "x2": (0.5, 3.0),
-    "x3": (1.1, 3.0),
-    "x4": (0.5, 3.0),
+    "Cell_D": (8.0, 16.0),
+    "Barrier_Thx": (0.5, 2.5),
+    "Barrier_Outer_Thx": (1.1, 3.0),
+    "ThermalResin_Thx": (0.5, 3.0),
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.
 EXCLUDED_REFERENCE_RANGES = {
-    "x1": {"center": 12.4, "half_width": 0.01},
-    "x2": {"center": 0.85, "half_width": 0.01},
-    "x3": {"center": 2.0, "half_width": 0.01},
-    "x4": {"center": 1.0, "half_width": 0.01},
+    "Cell_D": {"center": 12.4, "half_width": 0.01},
+    "Barrier_Thx": {"center": 0.85, "half_width": 0.01},
+    "Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},
+    "ThermalResin_Thx": {"center": 1.0, "half_width": 0.01},
 }
 
 DISCRETE_LEVELS = {
-    "disc1": ["A1", "A2", "S1", "S2", "S3"],
-    "disc2": ["S1", "S2", "S3", "P"],
-    "disc3": ["L1", "L2"],
+    "Barrier_Type": ["A1", "A2", "S1", "S2", "S3"],
+    "Barrier_Outer_type": ["S1", "S2", "S3", "P"],
+    "Cell_Barrier": ["L1", "L2"],
 }
 S_PREFIX = "S"
 
