@@ -88,6 +88,18 @@ MLP_OPTUNA_GATE_MIN_TMAX_R2 = None
 MLP_OPTUNA_TMAX_TIEBREAK_WEIGHT = 0.01
 ```
 
+MLP ensemble 다양성을 높이기 위해 stratified bootstrap을 옵션으로 켤 수 있습니다.
+
+```python
+MLP_ENSEMBLE_BOOTSTRAP = True
+MLP_BOOTSTRAP_STRATIFIED = True
+MLP_BOOTSTRAP_SAMPLE_RATIO = 1.0
+```
+
+- `MLP_ENSEMBLE_BOOTSTRAP=True`: 각 ensemble 멤버를 복원추출 샘플로 학습
+- `MLP_BOOTSTRAP_STRATIFIED=True`: NoTP/TP 비율을 유지하며 bootstrap 샘플링
+- `MLP_BOOTSTRAP_SAMPLE_RATIO`: 원본 대비 bootstrap 샘플 크기 비율
+
 그리고 안정화 점수는 다음 형태입니다.
 
 ```text

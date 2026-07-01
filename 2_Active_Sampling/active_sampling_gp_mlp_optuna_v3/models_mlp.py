@@ -76,6 +76,33 @@ def _class_weights(y_class):
     counts = np.where(counts <= 0, 1.0, counts)
     return (counts.sum() / (2 * counts)).astype(np.float32)
 
+def _bootstrap_indices(y_class, seed, stratified=True, sample_ratio=1.0):
+    rng = np.random.default_rng(seed)
+    n = len(y_class)
+    sample_n = max(2, int(round(float(sample_ratio) * n)))
+    if not stratified:
+        return rng.choice(n, size=sample_n, replace=True)
+
+    y = np.asarray(y_class)
+    classes, counts = np.unique(y, return_counts=True)
+    if len(classes) < 2:
+        return rng.choice(n, size=sample_n, replace=True)
+
+    parts = []
+    allocated = 0
+    for i, cls in enumerate(classes):
+        cls_idx = np.where(y == cls)[0]
+        if i == len(classes) - 1:
+            k = sample_n - allocated
+        else:
+            k = int(round(sample_n * (len(cls_idx) / n)))
+            k = max(1, k)
+            allocated += k
+        parts.append(rng.choice(cls_idx, size=k, replace=True))
+    out = np.concatenate(parts)
+    rng.shuffle(out)
+    return out
+
 def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None, max_epochs=None):
     _check_torch(); torch.manual_seed(seed); np.random.seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -136,8 +163,20 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
 def fit_mlp_ensemble(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None):
     models = []; tsc = esc = None; device = "cpu"
     n = int(params.get("ensemble_size", config.MLP_ENSEMBLE_SIZE)) if params else config.MLP_ENSEMBLE_SIZE
+    use_bootstrap = bool(params.get("bootstrap", config.MLP_ENSEMBLE_BOOTSTRAP)) if params else bool(config.MLP_ENSEMBLE_BOOTSTRAP)
+    bootstrap_stratified = bool(params.get("bootstrap_stratified", config.MLP_BOOTSTRAP_STRATIFIED)) if params else bool(config.MLP_BOOTSTRAP_STRATIFIED)
+    bootstrap_ratio = float(params.get("bootstrap_sample_ratio", config.MLP_BOOTSTRAP_SAMPLE_RATIO)) if params else float(config.MLP_BOOTSTRAP_SAMPLE_RATIO)
     for i in range(n):
-        model, tsc, esc, device = train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed + i*997, params=params)
+        member_seed = seed + i*997
+        if use_bootstrap:
+            idx = _bootstrap_indices(y_class, member_seed, stratified=bootstrap_stratified, sample_ratio=bootstrap_ratio)
+            xb = x_train[idx]
+            yb = y_class[idx]
+            tb = y_tmax[idx]
+            eb = None if y_extra is None else y_extra[idx]
+            model, tsc, esc, device = train_single_mlp(xb, yb, tb, eb, config, member_seed, params=params)
+        else:
+            model, tsc, esc, device = train_single_mlp(x_train, y_class, y_tmax, y_extra, config, member_seed, params=params)
         models.append(model)
     return MLPEnsemble(models, tsc, esc, device, params=params)
 
