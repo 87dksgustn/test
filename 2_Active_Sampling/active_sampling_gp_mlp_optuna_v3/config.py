@@ -11,7 +11,7 @@ DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type", "I_Cell_Barrier"]
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
-TMAX_COL = "MaxT_Adj"        # Valid mainly for TP cases
+TMAX_COL = "MaxT_Adj"        # Valid mainly for NoTP cases
 
 # Optional extra outputs. They can be trained by MLP multi-head,
 # but are not used as a separate sampling bucket by default.
