@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-from metrics_utils import classification_metrics, stable_metric_summary
-from models_gp import fit_gpc_passfail
+from metrics_utils import classification_metrics, regression_metrics, stable_metric_summary
+from models_gp import fit_gpc_passfail, fit_gpr_tmax_given_pass
 
-def evaluate_gpc_cv(x_transformed, y_class, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, random_state=42):
+def evaluate_gpc_cv(x_transformed, y_class, y_tmax=None, pass_label=0, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, random_state=42):
     unique, counts = np.unique(y_class, return_counts=True)
     if len(unique) < 2:
         return {"summary": {"error": "Only one class is present."}, "fold_metrics": []}
@@ -15,6 +15,18 @@ def evaluate_gpc_cv(x_transformed, y_class, tp_label=1, n_splits=5, weights=None
         clf = fit_gpc_passfail(x_transformed[tr], y_class[tr], random_state=random_state + fold, params=params)
         pred = clf.predict(x_transformed[va])
         m = classification_metrics(y_class[va], pred, tp_label=tp_label)
+        if y_tmax is not None:
+            reg, has = fit_gpr_tmax_given_pass(
+                x_transformed[tr], y_tmax[tr], y_class[tr],
+                pass_label=pass_label, min_pass_samples=4, random_state=random_state + fold, params=None
+            )
+            pass_mask = (y_class[va] == pass_label)
+            if has and int(pass_mask.sum()) > 0:
+                tpred = reg.predict(x_transformed[va][pass_mask])
+                m.update(regression_metrics(y_tmax[va][pass_mask], tpred))
+            else:
+                m.update({"tmax_mae": np.nan, "tmax_rmse": np.nan, "tmax_r2": np.nan})
+            m["tmax_eval_n"] = int(pass_mask.sum())
         m["model"] = "gp"; m["fold"] = fold
         fold_metrics.append(m)
     summary = stable_metric_summary(fold_metrics, weights or {"tp_recall":0.7,"tp_f1":0.3}, std_penalty)

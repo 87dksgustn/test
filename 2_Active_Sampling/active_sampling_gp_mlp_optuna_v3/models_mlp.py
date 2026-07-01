@@ -1,7 +1,7 @@
 import numpy as np
 from dataclasses import dataclass
 from sklearn.model_selection import train_test_split, StratifiedKFold
-from metrics_utils import classification_metrics, stable_metric_summary
+from metrics_utils import classification_metrics, regression_metrics, stable_metric_summary
 
 try:
     import torch
@@ -167,6 +167,12 @@ def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1,
         pred = predict_mlp_ensemble(bundle, x_transformed[va])
         ypred = (pred["p_tp"] >= 0.5).astype(int)
         m = classification_metrics(y_class[va], ypred, tp_label=tp_label)
+        pass_mask = (y_class[va] == config.PASS_LABEL)
+        if int(pass_mask.sum()) > 0:
+            m.update(regression_metrics(y_tmax[va][pass_mask], pred["tmax_pred"][pass_mask]))
+        else:
+            m.update({"tmax_mae": np.nan, "tmax_rmse": np.nan, "tmax_r2": np.nan})
+        m["tmax_eval_n"] = int(pass_mask.sum())
         m["model"] = "mlp"; m["fold"] = fold
         fold_metrics.append(m)
     summary = stable_metric_summary(fold_metrics, weights or {"tp_recall":0.7,"tp_f1":0.3}, std_penalty)
