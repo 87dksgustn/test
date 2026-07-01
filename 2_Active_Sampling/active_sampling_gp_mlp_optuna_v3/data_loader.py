@@ -19,4 +19,4 @@ def validate_passfail_labels(df, passfail_col, pass_label, fail_label):
     values = set(df[passfail_col].dropna().unique().tolist())
     allowed = {pass_label, fail_label}
     if not values.issubset(allowed):
-        raise ValueError(f"{passfail_col} must contain only PASS={pass_label}, FAIL={fail_label}. Found: {sorted(values)}")
+        raise ValueError(f"{passfail_col} must contain only NoTP={pass_label}, TP={fail_label}. Found: {sorted(values)}")

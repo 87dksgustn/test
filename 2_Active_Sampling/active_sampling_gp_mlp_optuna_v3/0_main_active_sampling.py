@@ -21,15 +21,15 @@ logging.basicConfig(
 def main():
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_labeled_data(config.INPUT_CSV)
-    validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.PASSFAIL_COL, config.TMAX_COL, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
-    validate_passfail_labels(df, config.PASSFAIL_COL, config.PASS_LABEL, config.FAIL_LABEL)
+    validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
+    validate_passfail_labels(df, config.TPNoTP_COL, config.PASS_LABEL, config.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(config.DISCRETE_LEVELS, config.DISCRETE_COLS, config.S_PREFIX)
     print(f"[INFO] Valid discrete combinations: {len(valid_combos)}")
     if len(valid_combos) != 28: print("[WARN] Valid combo count is not 28. Check DISCRETE_LEVELS and constraint logic.")
     df = attach_discrete_combo_id(df, valid_combos, config.DISCRETE_COLS)
-    diag = combo_diagnostics(df, valid_combos, config.DISCRETE_COLS, config.PASSFAIL_COL, config.TMAX_COL, config.PASS_LABEL, config.FAIL_LABEL)
+    diag = combo_diagnostics(df, valid_combos, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.PASS_LABEL, config.FAIL_LABEL)
     diag.to_csv(config.OUTPUT_DIAGNOSTICS_CSV, index=False, encoding="utf-8-sig")
-    x_raw, y_class, y_tmax = make_xy(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.PASSFAIL_COL, config.TMAX_COL)
+    x_raw, y_class, y_tmax = make_xy(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL)
     y_extra, extra_cols = make_extra_targets(df, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
     pre = build_preprocessor(config.CONTINUOUS_COLS, config.DISCRETE_COLS)
     x_train = pre.fit_transform(x_raw)
@@ -49,11 +49,11 @@ def main():
     scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(config.OUTPUT_SCORED_POOL_CSV, index=False, encoding="utf-8-sig")
     selected = select_batch(scored, x_candidate, df, config.BATCH_SIZE, config.BUCKET_RATIO, config.MAX_SAMPLES_PER_COMBO, config.MIN_BATCH_DISTANCE, config.RANDOM_SEED)
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
-    score_cols = ["p_fail", "p_pass", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_pass", "tmax_std_given_pass", "pass_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_pass_high_tmax", "acq_uncertainty_sparse"]
+    score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]
     selected = selected[front + score_cols]
     selected.to_csv(config.OUTPUT_CANDIDATES_CSV, index=False, encoding="utf-8-sig")
     print(f"[INFO] Saved next sampling candidates: {config.OUTPUT_CANDIDATES_CSV}")
-    print(selected[["sampling_rank", "selected_bucket", "selected_model_kind", "discrete_combo_id", "p_fail", "p_pass", "tmax_pred_given_pass"]].head(20))
+    print(selected[["sampling_rank", "selected_bucket", "selected_model_kind", "discrete_combo_id", "p_tp", "p_notp", "tmax_pred_given_notp"]].head(20))
 
 if __name__ == "__main__":
     try:

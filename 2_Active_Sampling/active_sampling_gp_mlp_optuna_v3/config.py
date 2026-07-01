@@ -6,39 +6,43 @@ from pathlib import Path
 
 INPUT_CSV = "initial_dataset.csv"
 
-CONTINUOUS_COLS = ["Cell_D", "Barrier_Thx", "Barrier_Outer_Thx", "ThermalResin_Thx"]
-DISCRETE_COLS = ["Barrier_Type", "Barrier_Outer_type", "Cell_Barrier"]
+CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
+DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type", "I_Cell_Barrier"]
 
-PASSFAIL_COL = "pass_fail"   # PASS=0, FAIL=1
-TMAX_COL = "tmax"            # Valid mainly for PASS cases
+PASSFAIL_COL = "TP_NoTP"
+TPNoTP_COL = PASSFAIL_COL
+TMAX_COL = "MaxT_Adj"        # Valid mainly for TP cases
 
 # Optional extra outputs. They can be trained by MLP multi-head,
 # but are not used as a separate sampling bucket by default.
 OTHER_REGRESSION_COLS = []
 TIME_FEATURE_COLS = []
 
-PASS_LABEL = 0
-FAIL_LABEL = 1
+TP_LABEL = 1
+NOTP_LABEL = 0
+# Internal pass/fail pipeline semantics are remapped as NoTP/TP.
+PASS_LABEL = NOTP_LABEL
+FAIL_LABEL = TP_LABEL
 
 CONTINUOUS_BOUNDS = {
-    "Cell_D": (8.0, 16.0),
-    "Barrier_Thx": (0.5, 2.5),
-    "Barrier_Outer_Thx": (1.1, 3.0),
-    "ThermalResin_Thx": (0.5, 3.0),
+    "A_Cell_D": (8.0, 16.0),
+    "C_Barrier_Thx": (0.5, 3.0),
+    "E_Barrier_Outer_Thx": (1.1, 3.0),
+    "F_ThermalResin_Thx": (0.5, 3.0),
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.
 EXCLUDED_REFERENCE_RANGES = {
-    "Cell_D": {"center": 12.4, "half_width": 0.01},
-    "Barrier_Thx": {"center": 0.85, "half_width": 0.01},
-    "Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},
-    "ThermalResin_Thx": {"center": 1.0, "half_width": 0.01},
+    "A_Cell_D": {"center": 12.4, "half_width": 0.01},
+    "C_Barrier_Thx": {"center": 0.85, "half_width": 0.01},
+    "E_Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},
+    "F_ThermalResin_Thx": {"center": 1.0, "half_width": 0.01},
 }
 
 DISCRETE_LEVELS = {
-    "Barrier_Type": ["A1", "A2", "S1", "S2", "S3"],
-    "Barrier_Outer_type": ["S1", "S2", "S3", "P"],
-    "Cell_Barrier": ["L1", "L2"],
+    "B_Barrier_Type": ["A1", "A2", "S1", "S2", "S3"],
+    "D_Barrier_Outer_Type": ["S1", "S2", "S3", "P"],
+    "I_Cell_Barrier": ["1CP", "2CP"],
 }
 S_PREFIX = "S"
 
@@ -54,7 +58,7 @@ MAX_SAMPLES_PER_COMBO = 40
 
 BUCKET_RATIO = {
     "boundary": 0.60,
-    "pass_high_tmax": 0.30,
+    "notp_high_tmax": 0.30,
     "uncertainty_sparse": 0.07,
     "random_check": 0.03,
 }
@@ -73,9 +77,9 @@ BOUNDARY_WEIGHTS_MLP = {
     "combo_priority": 0.15,
 }
 
-PASS_HIGH_TMAX_WEIGHTS = {
+NOTP_HIGH_TMAX_WEIGHTS = {
     "tmax": 0.40,
-    "pass_window": 0.30,
+    "notp_window": 0.30,
     "tmax_uncertainty": 0.10,
     "local_sparsity": 0.10,
     "combo_priority": 0.10,
@@ -88,9 +92,9 @@ UNCERTAINTY_SPARSE_WEIGHTS = {
     "combo_priority": 0.15,
 }
 
-PASS_WINDOW_LOW = 0.60
-PASS_WINDOW_HIGH = 0.90
-PASS_WINDOW_CENTER = 0.75
+NOTP_WINDOW_LOW = 0.60
+NOTP_WINDOW_HIGH = 0.90
+NOTP_WINDOW_CENTER = 0.75
 MIN_BATCH_DISTANCE = 0.15
 
 # ============================================================
@@ -107,8 +111,8 @@ MLP_MIN_FAIL_SAMPLES = 40
 MLP_MIN_SAMPLES_PER_COMBO = 8
 
 MODEL_SELECTION_WEIGHTS = {
-    "fail_recall": 0.70,
-    "fail_f1": 0.30,
+    "tp_recall": 0.70,
+    "tp_f1": 0.30,
 }
 MLP_SELECTION_MARGIN = 0.01
 

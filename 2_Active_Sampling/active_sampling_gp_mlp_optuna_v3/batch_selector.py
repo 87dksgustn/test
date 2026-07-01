@@ -11,7 +11,7 @@ def bucket_counts(batch_size, bucket_ratio):
     return counts
 
 def acq_col(bucket):
-    return {"boundary":"acq_boundary", "pass_high_tmax":"acq_pass_high_tmax", "uncertainty_sparse":"acq_uncertainty_sparse", "random_check":"random_score"}[bucket]
+    return {"boundary":"acq_boundary", "notp_high_tmax":"acq_notp_high_tmax", "uncertainty_sparse":"acq_uncertainty_sparse", "random_check":"random_score"}[bucket]
 
 def combo_counts_after(labeled_df, selected_df):
     d = labeled_df["discrete_combo_id"].value_counts().to_dict()
@@ -45,7 +45,7 @@ def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket
         selected += ch
         for i in ch: buckets[i] = bucket
     if len(selected) < batch_size:
-        pool["acq_mixed_fill"] = (pool["acq_boundary"] + pool["acq_pass_high_tmax"] + pool["acq_uncertainty_sparse"])/3
+        pool["acq_mixed_fill"] = (pool["acq_boundary"] + pool["acq_notp_high_tmax"] + pool["acq_uncertainty_sparse"])/3
         ch = greedy(pool, x_pool_transformed, labeled_df, selected, batch_size-len(selected), "acq_mixed_fill", max_samples_per_combo, min_batch_distance, rng)
         selected += ch
         for i in ch: buckets[i] = "fill_mixed"

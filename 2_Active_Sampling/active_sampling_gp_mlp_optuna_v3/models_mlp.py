@@ -152,9 +152,9 @@ def predict_mlp_ensemble(bundle, x):
             prob = torch.softmax(logits, dim=1).detach().cpu().numpy()
             ps.append(prob[:,1]); ts.append(bundle.tmax_scaler.inverse_transform(tscaled.detach().cpu().numpy()))
     p = np.vstack(ps); t = np.vstack(ts)
-    return {"p_fail": p.mean(axis=0), "p_pass": 1-p.mean(axis=0), "p_fail_std": p.std(axis=0), "tmax_pred": t.mean(axis=0), "tmax_std": t.std(axis=0)}
+    return {"p_tp": p.mean(axis=0), "p_notp": 1-p.mean(axis=0), "p_tp_std": p.std(axis=0), "tmax_pred": t.mean(axis=0), "tmax_std": t.std(axis=0)}
 
-def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, fail_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None):
+def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None):
     _check_torch()
     unique, counts = np.unique(y_class, return_counts=True)
     if len(unique) < 2: return {"summary": {"error": "Only one class is present."}, "fold_metrics": []}
@@ -165,10 +165,10 @@ def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, fail_label=
         model, tsc, esc, device = train_single_mlp(x_transformed[tr], y_class[tr], y_tmax[tr], None if y_extra is None else y_extra[tr], config, seed=config.RANDOM_SEED + fold*101, params=params, max_epochs=config.MLP_CV_MAX_EPOCHS)
         bundle = MLPEnsemble([model], tsc, esc, device, params=params)
         pred = predict_mlp_ensemble(bundle, x_transformed[va])
-        ypred = (pred["p_fail"] >= 0.5).astype(int)
-        m = classification_metrics(y_class[va], ypred, fail_label=fail_label)
+        ypred = (pred["p_tp"] >= 0.5).astype(int)
+        m = classification_metrics(y_class[va], ypred, tp_label=tp_label)
         m["model"] = "mlp"; m["fold"] = fold
         fold_metrics.append(m)
-    summary = stable_metric_summary(fold_metrics, weights or {"fail_recall":0.7,"fail_f1":0.3}, std_penalty)
+    summary = stable_metric_summary(fold_metrics, weights or {"tp_recall":0.7,"tp_f1":0.3}, std_penalty)
     summary["cv_splits"] = splits
     return {"summary": summary, "fold_metrics": fold_metrics}

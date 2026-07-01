@@ -12,20 +12,20 @@ from metrics_utils import weighted_score
 from models_mlp import TORCH_AVAILABLE, evaluate_mlp_cv
 
 # Tmax tuning is provided as a placeholder for condition-aware execution.
-# It is intentionally conservative because Tmax is secondary and PASS-only data can be small.
+# It is intentionally conservative because Tmax is secondary and NoTP-only data can be small.
 
 def optuna_eligibility(df, config):
     n_total = len(df)
-    n_pass = int((df[config.PASSFAIL_COL] == config.PASS_LABEL).sum())
-    n_fail = int((df[config.PASSFAIL_COL] == config.FAIL_LABEL).sum())
+    n_notp = int((df[config.PASSFAIL_COL] == config.PASS_LABEL).sum())
+    n_tp = int((df[config.PASSFAIL_COL] == config.FAIL_LABEL).sum())
     return {
         "optuna_available": bool(OPTUNA_AVAILABLE),
-        "gp_optuna_eligible": bool(OPTUNA_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_GP_OPTUNA and n_total >= config.GP_OPTUNA_MIN_TOTAL_SAMPLES and n_pass >= config.GP_OPTUNA_MIN_PASS_SAMPLES and n_fail >= config.GP_OPTUNA_MIN_FAIL_SAMPLES),
-        "tmax_optuna_eligible": bool(OPTUNA_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_TMAX_OPTUNA and n_pass >= config.TMAX_OPTUNA_MIN_PASS_SAMPLES),
-        "mlp_optuna_eligible": bool(OPTUNA_AVAILABLE and TORCH_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_MLP_OPTUNA and n_total >= config.MLP_OPTUNA_MIN_TOTAL_SAMPLES and n_pass >= config.MLP_OPTUNA_MIN_PASS_SAMPLES and n_fail >= config.MLP_OPTUNA_MIN_FAIL_SAMPLES),
+        "gp_optuna_eligible": bool(OPTUNA_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_GP_OPTUNA and n_total >= config.GP_OPTUNA_MIN_TOTAL_SAMPLES and n_notp >= config.GP_OPTUNA_MIN_PASS_SAMPLES and n_tp >= config.GP_OPTUNA_MIN_FAIL_SAMPLES),
+        "tmax_optuna_eligible": bool(OPTUNA_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_TMAX_OPTUNA and n_notp >= config.TMAX_OPTUNA_MIN_PASS_SAMPLES),
+        "mlp_optuna_eligible": bool(OPTUNA_AVAILABLE and TORCH_AVAILABLE and config.ENABLE_OPTUNA_AUTO and config.ENABLE_MLP_OPTUNA and n_total >= config.MLP_OPTUNA_MIN_TOTAL_SAMPLES and n_notp >= config.MLP_OPTUNA_MIN_PASS_SAMPLES and n_tp >= config.MLP_OPTUNA_MIN_FAIL_SAMPLES),
         "n_total": n_total,
-        "n_pass": n_pass,
-        "n_fail": n_fail,
+        "n_notp": n_notp,
+        "n_tp": n_tp,
     }
 
 def tune_gpc_with_optuna(x_train, y_class, config, n_trials=None):
@@ -39,7 +39,7 @@ def tune_gpc_with_optuna(x_train, y_class, config, n_trials=None):
             "length_scale": trial.suggest_float("length_scale", 0.05, 10.0, log=True),
             "n_restarts_optimizer": 1,
         }
-        res = evaluate_gpc_cv(x_train, y_class, fail_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params, random_state=config.RANDOM_SEED)
+        res = evaluate_gpc_cv(x_train, y_class, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params, random_state=config.RANDOM_SEED)
         return res["summary"].get("stable_score", -1e9)
     sampler = optuna.samplers.TPESampler(seed=config.RANDOM_SEED)
     study = optuna.create_study(direction="maximize", sampler=sampler)
@@ -64,7 +64,7 @@ def tune_mlp_with_optuna(x_train, y_class, y_tmax, y_extra, config, n_trials=Non
             "tmax_loss_weight": trial.suggest_float("tmax_loss_weight", 0.2, 1.0),
             "ensemble_size": config.MLP_ENSEMBLE_SIZE,
         }
-        res = evaluate_mlp_cv(x_train, y_class, y_tmax, y_extra, config, fail_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params)
+        res = evaluate_mlp_cv(x_train, y_class, y_tmax, y_extra, config, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params)
         return res["summary"].get("stable_score", -1e9)
     sampler = optuna.samplers.TPESampler(seed=config.RANDOM_SEED)
     study = optuna.create_study(direction="maximize", sampler=sampler)

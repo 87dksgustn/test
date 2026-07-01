@@ -70,8 +70,8 @@ MLP_OPTUNA_MIN_TOTAL_SAMPLES = 350
 
 ```python
 MODEL_SELECTION_WEIGHTS = {
-    "fail_recall": 0.70,
-    "fail_f1": 0.30,
+    "tp_recall": 0.70,
+    "tp_f1": 0.30,
 }
 ```
 
@@ -96,7 +96,7 @@ fold별 성능이 들쭉날쭉한 모델은 평균이 높아도 덜 선택됩니
 ```python
 BUCKET_RATIO = {
     "boundary": 0.60,
-    "pass_high_tmax": 0.30,
+    "notp_high_tmax": 0.30,
     "uncertainty_sparse": 0.07,
     "random_check": 0.03,
 }
@@ -119,5 +119,5 @@ outputs/cv_fold_metrics.csv
 
 - Optuna + MLP CV는 시간이 걸릴 수 있습니다.
 - 초기 데이터가 적을 때는 GP가 자동 선택될 가능성이 높습니다.
-- MLP는 기본적으로 350개 이상, PASS/FAIL 양 class가 충분할 때만 후보로 평가됩니다.
-- `Tmax`는 PASS 데이터만으로 학습하는 구조를 유지합니다.
+- MLP는 기본적으로 350개 이상, NoTP/TP 양 class가 충분할 때만 후보로 평가됩니다.
+- `MaxT_Adj`는 TP 데이터만으로 학습하는 구조를 유지합니다.
