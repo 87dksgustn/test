@@ -57,7 +57,7 @@ discrete_vars = {
     # "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 12
+samples_per_discrete_combination = 10
 
 n_trials = 300
 seed_min = 0
@@ -92,10 +92,10 @@ bias_sampling_enabled = True
 # - 1.0: 편향 없음
 # - 1.5~3.0: 보통 권장 범위
 bias_sampling_rules = {
-    "Cell_D": {"direction": "high", "strength": 1.8},
-    "Barrier_Thx": {"direction": "low", "strength": 1.6},
-    "Barrier_Outer_Thx": {"direction": "center", "strength": 1.8},
-    "ThermalResin_Thx": {"direction": "high", "strength": 1.4},
+    "Cell_D": {"direction": "high", "strength": 1.0},
+    "Barrier_Thx": {"direction": "low", "strength": 2.0},
+    "Barrier_Outer_Thx": {"direction": "high", "strength": 1.5},
+    "ThermalResin_Thx": {"direction": "high", "strength": 1.5},
 }
 
 # ---------------------------------------------------------
@@ -1029,6 +1029,141 @@ def plot_group_min_distance_bar(X_unit_best, groups_best, save_path=None):
     return df_group_dist
 
 
+def summarize_sampling_distribution(df_sample, label):
+    summary_rows = []
+
+    for column in df_sample.columns:
+        values = df_sample[column].to_numpy(dtype=float)
+        summary_rows.append({
+            "sampling_type": label,
+            "variable": column,
+            "mean": float(np.mean(values)),
+            "std": float(np.std(values)),
+            "min": float(np.min(values)),
+            "q10": float(np.quantile(values, 0.1)),
+            "q50": float(np.quantile(values, 0.5)),
+            "q90": float(np.quantile(values, 0.9)),
+            "max": float(np.max(values)),
+        })
+
+    return pd.DataFrame(summary_rows)
+
+
+def save_sampling_comparison_plots(
+    continuous_vars,
+    n_samples,
+    seed,
+    save_dir
+):
+    var_names = list(continuous_vars.keys())
+
+    df_uniform, _ = generate_lhs_samples(
+        continuous_vars=continuous_vars,
+        n_samples=n_samples,
+        seed=seed,
+        use_bias=False
+    )
+    df_biased, _ = generate_lhs_samples(
+        continuous_vars=continuous_vars,
+        n_samples=n_samples,
+        seed=seed,
+        use_bias=True
+    )
+
+    summary_uniform = summarize_sampling_distribution(df_uniform, "uniform")
+    summary_biased = summarize_sampling_distribution(df_biased, "biased")
+    df_summary = pd.concat([summary_uniform, summary_biased], ignore_index=True)
+
+    summary_path = save_dir / "sampling_comparison_summary.csv"
+    df_summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+
+    n_vars = len(var_names)
+    n_cols = 2
+    n_rows = int(np.ceil(n_vars / n_cols))
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(14, 3.8 * n_rows),
+        squeeze=False
+    )
+
+    for idx, var_name in enumerate(var_names):
+        ax = axes[idx // n_cols][idx % n_cols]
+
+        ax.hist(
+            df_uniform[var_name],
+            bins=24,
+            alpha=0.45,
+            density=True,
+            label="Uniform",
+            color="#4C78A8"
+        )
+        ax.hist(
+            df_biased[var_name],
+            bins=24,
+            alpha=0.45,
+            density=True,
+            label="Biased",
+            color="#F58518"
+        )
+
+        ax.set_title(var_name)
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+
+    for idx in range(n_vars, n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].axis("off")
+
+    fig.suptitle("Uniform vs Biased Initial Sampling Distribution", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+    hist_path = save_dir / "sampling_comparison_histograms.png"
+    fig.savefig(hist_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    if len(var_names) >= 2:
+        x_var = var_names[0]
+        y_var = var_names[1]
+
+        fig, ax = plt.subplots(figsize=(8, 7))
+        ax.scatter(
+            df_uniform[x_var],
+            df_uniform[y_var],
+            s=28,
+            alpha=0.45,
+            label="Uniform",
+            color="#4C78A8",
+            edgecolors="none"
+        )
+        ax.scatter(
+            df_biased[x_var],
+            df_biased[y_var],
+            s=28,
+            alpha=0.45,
+            label="Biased",
+            color="#F58518",
+            edgecolors="none"
+        )
+
+        ax.set_xlabel(x_var)
+        ax.set_ylabel(y_var)
+        ax.set_title(f"Uniform vs Biased Scatter: {x_var} vs {y_var}")
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        fig.tight_layout()
+
+        scatter_path = save_dir / "sampling_comparison_scatter.png"
+        fig.savefig(scatter_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    return {
+        "summary_path": summary_path,
+        "hist_path": hist_path,
+        "scatter_path": scatter_path if len(var_names) >= 2 else None,
+    }
+
+
 def create_trial_result_dir(trials_dir, A, B, score):
     trials_dir.mkdir(exist_ok=True)
 
@@ -1134,6 +1269,20 @@ df_doe.to_csv(
 print("\n최종 DOE 생성 완료")
 print(f"저장 파일: {output_csv_path}")
 print(df_doe.head())
+
+
+# 편향 샘플링 vs 균등 샘플링 비교 저장
+comparison_paths = save_sampling_comparison_plots(
+    continuous_vars=continuous_vars,
+    n_samples=len(df_doe),
+    seed=best_seed,
+    save_dir=result_dir
+)
+
+print(f"\n샘플링 비교 요약 저장 완료: {comparison_paths['summary_path']}")
+print(f"샘플링 비교 histogram 저장 완료: {comparison_paths['hist_path']}")
+if comparison_paths["scatter_path"] is not None:
+    print(f"샘플링 비교 scatter 저장 완료: {comparison_paths['scatter_path']}")
 
 
 # 시각화 실행
