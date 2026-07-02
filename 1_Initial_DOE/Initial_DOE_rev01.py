@@ -5,6 +5,10 @@ from itertools import product
 from pathlib import Path
 from scipy.stats import qmc
 from sklearn.metrics import pairwise_distances
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 import optuna
 import matplotlib.pyplot as plt
 
@@ -27,11 +31,11 @@ continuous_vars = {
     # "Cell_H": (300, 600),
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
-    "Barrier_Thx": (0.5, 2.1),
+    "Barrier_Thx": (0.5, 2.5),
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
-    "ThermalResin_Thx": (0.5, 3.0),
+    "ThermalResin_Thx": (0.5, 2.5),
     # "Housing_Btm_Thx": (1, 12),
     # "SideBeam_Thx": (14, 30),
 }
@@ -50,10 +54,10 @@ discrete_vars = {
     # "Cooling_Loc": ["Top", "Bottom"],
     # "Heater_Type" : ["Small", "Medium"],
     # "Heater_Loc" : ["Center", "DSF", "Lead"],
-    "Cell/Barrier": [1, 2],
+    # "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 8
+samples_per_discrete_combination = 12
 
 n_trials = 300
 seed_min = 0
@@ -72,6 +76,31 @@ local_swap_iterations = 60
 
 # Optuna 병렬 trial 실행 수 (-1: 사용 가능한 모든 코어)
 optuna_n_jobs = -1
+
+# ---------------------------------------------------------
+# Boundary-focused initial sampling (pass/fail 경계 집중)
+# ---------------------------------------------------------
+# False면 기존 균등 LHS + seed 최적화 흐름과 동일하게 동작
+boundary_focus_enabled = True
+
+# 과거 해석 결과(입력 + pass/fail)가 담긴 CSV 경로
+historical_labeled_data_csv = "historical_pass_fail_results.csv"
+
+# CSV 내 pass/fail 컬럼명 및 pass로 해석할 값들
+pass_fail_column = "pass_fail"
+pass_labels = [1, "1", True, "true", "pass", "PASS", "ok", "OK"]
+
+# 모델 학습/샘플링 제어 파라미터
+boundary_min_training_samples = 60
+boundary_candidate_multiplier = 20
+boundary_top_pool_multiplier = 5
+boundary_exploration_ratio = 0.20
+
+
+# lazy initialization cache
+_boundary_focus_model = None
+_boundary_focus_ready = False
+_boundary_focus_checked = False
 
 
 
@@ -186,6 +215,256 @@ def generate_discrete_combinations(discrete_vars):
         combinations = filtered_combinations
 
     return pd.DataFrame(combinations, columns=var_names)
+
+
+def _normalize_label_to_binary(value, pass_label_set_raw, pass_label_set_str):
+    if pd.isna(value):
+        return np.nan
+
+    if value in pass_label_set_raw:
+        return 1
+
+    value_str = str(value).strip().lower()
+    if value_str in pass_label_set_str:
+        return 1
+
+    return 0
+
+
+def initialize_boundary_focus_model(continuous_vars, discrete_vars):
+    global _boundary_focus_model
+    global _boundary_focus_ready
+    global _boundary_focus_checked
+
+    if _boundary_focus_checked:
+        return _boundary_focus_model
+
+    _boundary_focus_checked = True
+
+    if not boundary_focus_enabled:
+        print("Boundary focus 비활성화: 기존 균등 LHS를 사용합니다.")
+        return None
+
+    data_path = Path(historical_labeled_data_csv)
+    if not data_path.exists():
+        print(
+            f"Boundary focus 비활성화: 학습 데이터 파일이 없습니다 ({data_path}). "
+            "기존 균등 LHS를 사용합니다."
+        )
+        return None
+
+    cont_cols = list(continuous_vars.keys())
+    disc_cols = list(discrete_vars.keys())
+    required_cols = cont_cols + disc_cols + [pass_fail_column]
+
+    df_hist = pd.read_csv(data_path)
+
+    missing_cols = [col for col in required_cols if col not in df_hist.columns]
+    if missing_cols:
+        print(
+            "Boundary focus 비활성화: 학습 데이터 컬럼 누락 "
+            f"{missing_cols}. 기존 균등 LHS를 사용합니다."
+        )
+        return None
+
+    df_hist = df_hist[required_cols].dropna().copy()
+
+    pass_label_set_raw = set(pass_labels)
+    pass_label_set_str = {str(v).strip().lower() for v in pass_labels}
+
+    y = df_hist[pass_fail_column].apply(
+        lambda v: _normalize_label_to_binary(v, pass_label_set_raw, pass_label_set_str)
+    )
+
+    valid_mask = ~y.isna()
+    X = df_hist.loc[valid_mask, cont_cols + disc_cols].copy()
+    y = y.loc[valid_mask].astype(int)
+
+    if len(X) < boundary_min_training_samples:
+        print(
+            "Boundary focus 비활성화: 학습 데이터 수가 부족합니다 "
+            f"({len(X)} < {boundary_min_training_samples}). 기존 균등 LHS를 사용합니다."
+        )
+        return None
+
+    if y.nunique() < 2:
+        print(
+            "Boundary focus 비활성화: pass/fail이 한 클래스만 존재합니다. "
+            "기존 균등 LHS를 사용합니다."
+        )
+        return None
+
+    preprocess = ColumnTransformer(
+        transformers=[
+            ("num", "passthrough", cont_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), disc_cols),
+        ]
+    )
+
+    model = Pipeline(
+        steps=[
+            ("preprocess", preprocess),
+            (
+                "classifier",
+                RandomForestClassifier(
+                    n_estimators=300,
+                    min_samples_leaf=2,
+                    class_weight="balanced_subsample",
+                    random_state=2026,
+                    n_jobs=-1,
+                ),
+            ),
+        ]
+    )
+
+    model.fit(X, y)
+
+    _boundary_focus_model = model
+    _boundary_focus_ready = True
+
+    pass_ratio = float(np.mean(y))
+    print(
+        "Boundary focus 활성화: surrogate 학습 완료 "
+        f"(samples={len(X)}, pass_ratio={pass_ratio:.3f})."
+    )
+
+    return _boundary_focus_model
+
+
+def select_diverse_subset(X_unit, n_select, seed):
+    n_candidates = X_unit.shape[0]
+
+    if n_select >= n_candidates:
+        return np.arange(n_candidates)
+
+    rng = np.random.default_rng(seed + 991)
+    distance_matrix = pairwise_distances(X_unit, X_unit, metric="euclidean")
+
+    first_idx = int(rng.integers(0, n_candidates))
+    selected = [first_idx]
+
+    min_dist_to_selected = distance_matrix[first_idx, :].copy()
+    min_dist_to_selected[first_idx] = -np.inf
+
+    while len(selected) < n_select:
+        next_idx = int(np.argmax(min_dist_to_selected))
+        selected.append(next_idx)
+
+        min_dist_to_selected = np.minimum(
+            min_dist_to_selected,
+            distance_matrix[next_idx, :]
+        )
+        min_dist_to_selected[selected] = -np.inf
+
+    return np.array(selected, dtype=int)
+
+
+def compute_boundary_scores(df_cont_candidates, df_disc, model):
+    n_candidates = len(df_cont_candidates)
+    boundary_distance_sum = np.zeros(n_candidates, dtype=float)
+    pass_prob_sum = np.zeros(n_candidates, dtype=float)
+
+    disc_cols = list(df_disc.columns)
+
+    for _, disc_row in df_disc.iterrows():
+        X_eval = df_cont_candidates.copy()
+        for col in disc_cols:
+            X_eval[col] = disc_row[col]
+
+        pass_prob = model.predict_proba(X_eval)[:, 1]
+
+        boundary_distance_sum += np.abs(pass_prob - 0.5)
+        pass_prob_sum += pass_prob
+
+    boundary_distance_mean = boundary_distance_sum / len(df_disc)
+    pass_prob_mean = pass_prob_sum / len(df_disc)
+
+    # 값이 클수록 경계(0.5)에 가까움
+    boundary_closeness = 0.5 - boundary_distance_mean
+
+    return boundary_closeness, pass_prob_mean
+
+
+def generate_boundary_focused_samples(
+    continuous_vars,
+    discrete_vars,
+    n_samples,
+    seed,
+    model
+):
+    candidate_count = max(n_samples * boundary_candidate_multiplier, n_samples)
+
+    df_cont_candidates, X_unit_candidates = generate_lhs_samples(
+        continuous_vars=continuous_vars,
+        n_samples=candidate_count,
+        seed=seed
+    )
+
+    df_disc = generate_discrete_combinations(discrete_vars)
+
+    boundary_closeness, _ = compute_boundary_scores(
+        df_cont_candidates=df_cont_candidates,
+        df_disc=df_disc,
+        model=model
+    )
+
+    sorted_indices = np.argsort(-boundary_closeness)
+
+    top_pool_size = min(
+        candidate_count,
+        max(n_samples, n_samples * boundary_top_pool_multiplier)
+    )
+
+    top_pool_indices = sorted_indices[:top_pool_size]
+
+    n_explore = int(round(n_samples * boundary_exploration_ratio))
+    n_explore = max(0, n_explore)
+
+    rng = np.random.default_rng(seed + 1729)
+    all_indices = np.arange(candidate_count)
+    remaining_indices = np.setdiff1d(all_indices, top_pool_indices, assume_unique=False)
+
+    if n_explore > 0 and len(remaining_indices) > 0:
+        n_explore = min(n_explore, len(remaining_indices))
+        explore_indices = rng.choice(remaining_indices, size=n_explore, replace=False)
+        pool_indices = np.unique(np.concatenate([top_pool_indices, explore_indices]))
+    else:
+        pool_indices = top_pool_indices
+
+    if len(pool_indices) < n_samples:
+        pool_indices = all_indices
+
+    selected_in_pool = select_diverse_subset(
+        X_unit=X_unit_candidates[pool_indices],
+        n_select=n_samples,
+        seed=seed
+    )
+
+    selected_indices = pool_indices[selected_in_pool]
+
+    df_cont_selected = df_cont_candidates.iloc[selected_indices].reset_index(drop=True)
+    X_unit_selected = X_unit_candidates[selected_indices]
+
+    return df_cont_selected, X_unit_selected
+
+
+def generate_continuous_samples(continuous_vars, discrete_vars, n_samples, seed):
+    model = initialize_boundary_focus_model(continuous_vars, discrete_vars)
+
+    if model is None:
+        return generate_lhs_samples(
+            continuous_vars=continuous_vars,
+            n_samples=n_samples,
+            seed=seed
+        )
+
+    return generate_boundary_focused_samples(
+        continuous_vars=continuous_vars,
+        discrete_vars=discrete_vars,
+        n_samples=n_samples,
+        seed=seed,
+        model=model
+    )
 
 
 def compute_distance_matrix(X_unit):
@@ -344,8 +623,9 @@ def evaluate_seed(seed):
     n_groups = len(df_disc)
     total_samples = n_groups * samples_per_discrete_combination
 
-    _, X_unit = generate_lhs_samples(
+    _, X_unit = generate_continuous_samples(
         continuous_vars=continuous_vars,
+        discrete_vars=discrete_vars,
         n_samples=total_samples,
         seed=seed
     )
@@ -478,8 +758,9 @@ def build_initial_doe(
     print(f"총 DOE 샘플 수: {total_samples}")
     print(f"사용 seed: {seed}")
 
-    df_cont, X_unit = generate_lhs_samples(
+    df_cont, X_unit = generate_continuous_samples(
         continuous_vars=continuous_vars,
+        discrete_vars=discrete_vars,
         n_samples=total_samples,
         seed=seed
     )
