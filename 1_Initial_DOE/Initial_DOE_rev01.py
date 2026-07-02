@@ -78,10 +78,31 @@ local_swap_iterations = 60
 optuna_n_jobs = -1
 
 # ---------------------------------------------------------
+# Knowledge-driven biased initial sampling (경험지식 기반)
+# ---------------------------------------------------------
+# True면 변수별 편향 규칙을 적용한 LHS를 우선 사용
+bias_sampling_enabled = True
+
+# direction
+# - "high"  : 큰 값 쪽으로 치우침
+# - "low"   : 작은 값 쪽으로 치우침
+# - "center": 중앙값 근처로 치우침
+# - "edge"  : 양끝(극단) 값 쪽으로 치우침
+# strength
+# - 1.0: 편향 없음
+# - 1.5~3.0: 보통 권장 범위
+bias_sampling_rules = {
+    "Cell_D": {"direction": "high", "strength": 1.8},
+    "Barrier_Thx": {"direction": "low", "strength": 1.6},
+    "Barrier_Outer_Thx": {"direction": "center", "strength": 1.8},
+    "ThermalResin_Thx": {"direction": "high", "strength": 1.4},
+}
+
+# ---------------------------------------------------------
 # Boundary-focused initial sampling (pass/fail 경계 집중)
 # ---------------------------------------------------------
 # False면 기존 균등 LHS + seed 최적화 흐름과 동일하게 동작
-boundary_focus_enabled = True
+boundary_focus_enabled = False
 
 # 과거 해석 결과(입력 + pass/fail)가 담긴 CSV 경로
 historical_labeled_data_csv = "historical_pass_fail_results.csv"
@@ -114,7 +135,60 @@ trials_dir = Path("Trials")
 # 2. DOE 생성 함수
 # =========================================================
 
-def generate_lhs_samples(continuous_vars, n_samples, seed):
+def apply_bias_to_unit_column(unit_col, direction, strength):
+    direction_norm = str(direction).strip().lower()
+    strength_value = max(float(strength), 1.0)
+
+    if strength_value == 1.0:
+        return unit_col
+
+    if direction_norm == "high":
+        return 1.0 - np.power(1.0 - unit_col, strength_value)
+
+    if direction_norm == "low":
+        return np.power(unit_col, strength_value)
+
+    if direction_norm == "center":
+        left_mask = unit_col < 0.5
+        right_mask = ~left_mask
+
+        transformed = np.empty_like(unit_col)
+
+        transformed[left_mask] = 0.5 * np.power(
+            2.0 * unit_col[left_mask],
+            1.0 / strength_value
+        )
+        transformed[right_mask] = 1.0 - 0.5 * np.power(
+            2.0 * (1.0 - unit_col[right_mask]),
+            1.0 / strength_value
+        )
+
+        return transformed
+
+    if direction_norm == "edge":
+        left_mask = unit_col < 0.5
+        right_mask = ~left_mask
+
+        transformed = np.empty_like(unit_col)
+
+        transformed[left_mask] = 0.5 * np.power(
+            2.0 * unit_col[left_mask],
+            strength_value
+        )
+        transformed[right_mask] = 1.0 - 0.5 * np.power(
+            2.0 * (1.0 - unit_col[right_mask]),
+            strength_value
+        )
+
+        return transformed
+
+    raise ValueError(
+        f"지원하지 않는 bias direction입니다: {direction}. "
+        "사용 가능: high, low, center, edge"
+    )
+
+
+def generate_lhs_samples(continuous_vars, n_samples, seed, use_bias=False):
     var_names = list(continuous_vars.keys())
     bounds = np.array(list(continuous_vars.values()), dtype=float)
 
@@ -130,6 +204,13 @@ def generate_lhs_samples(continuous_vars, n_samples, seed):
     for col_idx, var_name in enumerate(var_names):
         lower, upper = bounds[col_idx]
         unit_col = X_unit[:, col_idx]
+
+        if use_bias:
+            rule = bias_sampling_rules.get(var_name)
+            if rule is not None:
+                direction = rule.get("direction", "high")
+                strength = rule.get("strength", 1.0)
+                unit_col = apply_bias_to_unit_column(unit_col, direction, strength)
 
         exclusion = continuous_exclusion_windows.get(var_name)
         if exclusion is None:
@@ -185,6 +266,15 @@ def generate_lhs_samples(continuous_vars, n_samples, seed):
     df_cont = pd.DataFrame(X_scaled, columns=var_names)
 
     return df_cont, X_unit
+
+
+def generate_biased_lhs_samples(continuous_vars, n_samples, seed):
+    return generate_lhs_samples(
+        continuous_vars=continuous_vars,
+        n_samples=n_samples,
+        seed=seed,
+        use_bias=True
+    )
 
 
 def generate_discrete_combinations(discrete_vars):
@@ -449,9 +539,18 @@ def generate_boundary_focused_samples(
 
 
 def generate_continuous_samples(continuous_vars, discrete_vars, n_samples, seed):
+    if bias_sampling_enabled:
+        print("Bias sampling 활성화: 경험지식 기반 비균등 LHS를 사용합니다.")
+        return generate_biased_lhs_samples(
+            continuous_vars=continuous_vars,
+            n_samples=n_samples,
+            seed=seed
+        )
+
     model = initialize_boundary_focus_model(continuous_vars, discrete_vars)
 
     if model is None:
+        print("Uniform sampling 사용: 균등 LHS를 사용합니다.")
         return generate_lhs_samples(
             continuous_vars=continuous_vars,
             n_samples=n_samples,
