@@ -1049,6 +1049,313 @@ def summarize_sampling_distribution(df_sample, label):
     return pd.DataFrame(summary_rows)
 
 
+def normalize_continuous_df_to_unit(df_sample, continuous_vars):
+    unit_df = pd.DataFrame(index=df_sample.index)
+
+    for var_name, (lower, upper) in continuous_vars.items():
+        span = float(upper) - float(lower)
+        if span <= 0:
+            raise ValueError(f"{var_name} 범위가 유효하지 않습니다: ({lower}, {upper})")
+
+        unit_df[var_name] = (df_sample[var_name].astype(float) - float(lower)) / span
+
+    return unit_df
+
+
+def compute_bias_adherence_score(df_unit, bias_rules):
+    if not bias_rules:
+        return 0.5
+
+    per_var_scores = []
+
+    for var_name, rule in bias_rules.items():
+        if var_name not in df_unit.columns:
+            continue
+
+        direction = str(rule.get("direction", "high")).strip().lower()
+        values = df_unit[var_name].to_numpy(dtype=float)
+
+        if direction == "high":
+            score = float(np.mean(values))
+        elif direction == "low":
+            score = float(1.0 - np.mean(values))
+        elif direction == "center":
+            mean_abs_center_dist = float(np.mean(np.abs(values - 0.5)))
+            score = float(np.clip(1.0 - (mean_abs_center_dist / 0.25), 0.0, 1.0))
+        elif direction == "edge":
+            mean_abs_center_dist = float(np.mean(np.abs(values - 0.5)))
+            score = float(np.clip((mean_abs_center_dist - 0.25) / 0.25, 0.0, 1.0))
+        else:
+            score = 0.5
+
+        per_var_scores.append(score)
+
+    if len(per_var_scores) == 0:
+        return 0.5
+
+    return float(np.mean(per_var_scores))
+
+
+def compute_pre_cfd_sampling_scores(df_sample, continuous_vars, bias_rules):
+    df_unit = normalize_continuous_df_to_unit(df_sample, continuous_vars)
+    X_unit = df_unit.to_numpy(dtype=float)
+
+    discrepancy = float(qmc.discrepancy(X_unit, method="CD"))
+    coverage_score = float(1.0 / (1.0 + 20.0 * discrepancy))
+
+    distance_matrix = pairwise_distances(X_unit, X_unit, metric="euclidean")
+    np.fill_diagonal(distance_matrix, np.inf)
+    nearest_distances = np.min(distance_matrix, axis=1)
+
+    d = X_unit.shape[1]
+    max_unit_distance = float(np.sqrt(d))
+    mean_nn = float(np.mean(nearest_distances))
+    q10_nn = float(np.quantile(nearest_distances, 0.1))
+
+    mean_nn_norm = float(np.clip(mean_nn / max_unit_distance, 0.0, 1.0))
+    q10_nn_norm = float(np.clip(q10_nn / max_unit_distance, 0.0, 1.0))
+    diversity_score = float(0.5 * mean_nn_norm + 0.5 * q10_nn_norm)
+
+    bias_adherence_score = compute_bias_adherence_score(df_unit, bias_rules)
+
+    pre_cfd_score = float(
+        0.35 * coverage_score
+        + 0.15 * diversity_score
+        + 0.50 * bias_adherence_score
+    )
+
+    return {
+        "coverage_discrepancy": discrepancy,
+        "coverage_score": coverage_score,
+        "mean_nn_distance_unit": mean_nn,
+        "q10_nn_distance_unit": q10_nn,
+        "diversity_score": diversity_score,
+        "bias_adherence_score": bias_adherence_score,
+        "pre_cfd_score": pre_cfd_score,
+    }
+
+
+def save_coverage_cdf_plot(df_uniform, df_biased, continuous_vars, save_dir):
+    var_names = list(continuous_vars.keys())
+    n_vars = len(var_names)
+    n_cols = 2
+    n_rows = int(np.ceil(n_vars / n_cols))
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(14, 3.8 * n_rows),
+        squeeze=False
+    )
+
+    for idx, var_name in enumerate(var_names):
+        ax = axes[idx // n_cols][idx % n_cols]
+        lower, upper = continuous_vars[var_name]
+
+        uniform_sorted = np.sort(df_uniform[var_name].values)
+        biased_sorted = np.sort(df_biased[var_name].values)
+        n = len(uniform_sorted)
+        ecdf_y = np.arange(1, n + 1) / n
+
+        ideal_x = np.linspace(lower, upper, 100)
+        ideal_cdf = (ideal_x - lower) / (upper - lower)
+
+        ax.plot(ideal_x, ideal_cdf, "k--", linewidth=1.5, label="Ideal Uniform CDF")
+        ax.step(uniform_sorted, ecdf_y, where="post", label="Uniform", color="#4C78A8", linewidth=1.2)
+        ax.step(biased_sorted, ecdf_y, where="post", label="Biased", color="#F58518", linewidth=1.2)
+
+        ax.set_xlabel(var_name)
+        ax.set_ylabel("Cumulative Probability")
+        ax.set_title(f"CDF: {var_name}")
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=8)
+        ax.set_xlim(lower, upper)
+        ax.set_ylim(0, 1)
+
+    for idx in range(n_vars, n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].axis("off")
+
+    fig.suptitle("Coverage CDF Comparison (Uniform vs Biased)", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+    cdf_path = save_dir / "2_coverage_CDF.png"
+    fig.savefig(cdf_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return cdf_path
+
+
+def save_coverage_heatmap_plot(df_uniform, df_biased, continuous_vars, save_dir):
+    var_names = list(continuous_vars.keys())
+
+    if len(var_names) < 2:
+        return None
+
+    x_var = var_names[0]
+    y_var = var_names[1]
+    x_lower, x_upper = continuous_vars[x_var]
+    y_lower, y_upper = continuous_vars[y_var]
+
+    n_bins = 12
+    x_edges = np.linspace(x_lower, x_upper, n_bins + 1)
+    y_edges = np.linspace(y_lower, y_upper, n_bins + 1)
+
+    uniform_hist, _, _ = np.histogram2d(
+        df_uniform[x_var], df_uniform[y_var],
+        bins=[x_edges, y_edges]
+    )
+    biased_hist, _, _ = np.histogram2d(
+        df_biased[x_var], df_biased[y_var],
+        bins=[x_edges, y_edges]
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    im0 = axes[0].imshow(
+        uniform_hist.T,
+        origin="lower",
+        extent=[x_lower, x_upper, y_lower, y_upper],
+        aspect="auto",
+        cmap="Blues"
+    )
+    axes[0].set_xlabel(x_var)
+    axes[0].set_ylabel(y_var)
+    axes[0].set_title("Uniform Sampling Density")
+    fig.colorbar(im0, ax=axes[0], label="Count")
+
+    im1 = axes[1].imshow(
+        biased_hist.T,
+        origin="lower",
+        extent=[x_lower, x_upper, y_lower, y_upper],
+        aspect="auto",
+        cmap="Oranges"
+    )
+    axes[1].set_xlabel(x_var)
+    axes[1].set_ylabel(y_var)
+    axes[1].set_title("Biased Sampling Density")
+    fig.colorbar(im1, ax=axes[1], label="Count")
+
+    fig.suptitle(f"Coverage Heatmap: {x_var} vs {y_var}", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    heatmap_path = save_dir / "2_coverage_heatmap.png"
+    fig.savefig(heatmap_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return heatmap_path
+
+
+def save_coverage_grid_plot(df_uniform, df_biased, continuous_vars, save_dir):
+    var_names = list(continuous_vars.keys())
+
+    if len(var_names) < 2:
+        return None
+
+    x_var = var_names[0]
+    y_var = var_names[1]
+    x_lower, x_upper = continuous_vars[x_var]
+    y_lower, y_upper = continuous_vars[y_var]
+
+    n_bins = 8
+    x_edges = np.linspace(x_lower, x_upper, n_bins + 1)
+    y_edges = np.linspace(y_lower, y_upper, n_bins + 1)
+
+    def compute_occupancy(df):
+        hist, _, _ = np.histogram2d(
+            df[x_var], df[y_var],
+            bins=[x_edges, y_edges]
+        )
+        occupied = (hist > 0).astype(int)
+        return occupied, hist
+
+    uniform_occ, uniform_count = compute_occupancy(df_uniform)
+    biased_occ, biased_count = compute_occupancy(df_biased)
+
+    total_cells = n_bins * n_bins
+    uniform_occupancy_rate = float(np.sum(uniform_occ)) / total_cells
+    biased_occupancy_rate = float(np.sum(biased_occ)) / total_cells
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    for i in range(n_bins):
+        for j in range(n_bins):
+            x_center = (x_edges[i] + x_edges[i + 1]) / 2
+            y_center = (y_edges[j] + y_edges[j + 1]) / 2
+
+            if uniform_occ[i, j] > 0:
+                axes[0].add_patch(plt.Rectangle(
+                    (x_edges[i], y_edges[j]),
+                    x_edges[i + 1] - x_edges[i],
+                    y_edges[j + 1] - y_edges[j],
+                    facecolor="#4C78A8",
+                    alpha=0.4,
+                    edgecolor="gray",
+                    linewidth=0.5
+                ))
+                axes[0].text(
+                    x_center, y_center,
+                    str(int(uniform_count[i, j])),
+                    ha="center", va="center", fontsize=7
+                )
+            else:
+                axes[0].add_patch(plt.Rectangle(
+                    (x_edges[i], y_edges[j]),
+                    x_edges[i + 1] - x_edges[i],
+                    y_edges[j + 1] - y_edges[j],
+                    facecolor="white",
+                    edgecolor="gray",
+                    linewidth=0.5
+                ))
+
+            if biased_occ[i, j] > 0:
+                axes[1].add_patch(plt.Rectangle(
+                    (x_edges[i], y_edges[j]),
+                    x_edges[i + 1] - x_edges[i],
+                    y_edges[j + 1] - y_edges[j],
+                    facecolor="#F58518",
+                    alpha=0.4,
+                    edgecolor="gray",
+                    linewidth=0.5
+                ))
+                axes[1].text(
+                    x_center, y_center,
+                    str(int(biased_count[i, j])),
+                    ha="center", va="center", fontsize=7
+                )
+            else:
+                axes[1].add_patch(plt.Rectangle(
+                    (x_edges[i], y_edges[j]),
+                    x_edges[i + 1] - x_edges[i],
+                    y_edges[j + 1] - y_edges[j],
+                    facecolor="white",
+                    edgecolor="gray",
+                    linewidth=0.5
+                ))
+
+    axes[0].set_xlim(x_lower, x_upper)
+    axes[0].set_ylim(y_lower, y_upper)
+    axes[0].set_xlabel(x_var)
+    axes[0].set_ylabel(y_var)
+    axes[0].set_title(f"Uniform Grid Occupancy: {uniform_occupancy_rate * 100:.1f}%")
+    axes[0].set_aspect("auto")
+
+    axes[1].set_xlim(x_lower, x_upper)
+    axes[1].set_ylim(y_lower, y_upper)
+    axes[1].set_xlabel(x_var)
+    axes[1].set_ylabel(y_var)
+    axes[1].set_title(f"Biased Grid Occupancy: {biased_occupancy_rate * 100:.1f}%")
+    axes[1].set_aspect("auto")
+
+    fig.suptitle(f"Grid Occupancy: {x_var} vs {y_var}", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    grid_path = save_dir / "2_coverage_grid.png"
+    fig.savefig(grid_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return grid_path, uniform_occupancy_rate, biased_occupancy_rate
+
+
 def save_sampling_comparison_plots(
     continuous_vars,
     n_samples,
@@ -1072,7 +1379,37 @@ def save_sampling_comparison_plots(
 
     summary_uniform = summarize_sampling_distribution(df_uniform, "uniform")
     summary_biased = summarize_sampling_distribution(df_biased, "biased")
-    df_summary = pd.concat([summary_uniform, summary_biased], ignore_index=True)
+
+    metrics_uniform = compute_pre_cfd_sampling_scores(
+        df_sample=df_uniform,
+        continuous_vars=continuous_vars,
+        bias_rules=bias_sampling_rules
+    )
+    metrics_biased = compute_pre_cfd_sampling_scores(
+        df_sample=df_biased,
+        continuous_vars=continuous_vars,
+        bias_rules=bias_sampling_rules
+    )
+
+    metrics_rows = [
+        {
+            "sampling_type": "uniform",
+            "variable": "__overall__",
+            **metrics_uniform,
+        },
+        {
+            "sampling_type": "biased",
+            "variable": "__overall__",
+            **metrics_biased,
+        },
+    ]
+    df_metrics = pd.DataFrame(metrics_rows)
+
+    df_summary = pd.concat(
+        [summary_uniform, summary_biased, df_metrics],
+        ignore_index=True,
+        sort=False
+    )
 
     summary_path = save_dir / "sampling_comparison_summary.csv"
     df_summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
@@ -1118,10 +1455,11 @@ def save_sampling_comparison_plots(
     fig.suptitle("Uniform vs Biased Initial Sampling Distribution", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
 
-    hist_path = save_dir / "sampling_comparison_histograms.png"
+    hist_path = save_dir / "1_bias_histogram.png"
     fig.savefig(hist_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+    scatter_path = None
     if len(var_names) >= 2:
         x_var = var_names[0]
         y_var = var_names[1]
@@ -1153,21 +1491,37 @@ def save_sampling_comparison_plots(
         ax.legend()
         fig.tight_layout()
 
-        scatter_path = save_dir / "sampling_comparison_scatter.png"
+        scatter_path = save_dir / "1_bias_scatter.png"
         fig.savefig(scatter_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
+
+    cdf_path = save_coverage_cdf_plot(df_uniform, df_biased, continuous_vars, save_dir)
+
+    heatmap_path = None
+    grid_path = None
+    uniform_occ_rate = None
+    biased_occ_rate = None
 
     return {
         "summary_path": summary_path,
         "hist_path": hist_path,
-        "scatter_path": scatter_path if len(var_names) >= 2 else None,
+        "scatter_path": scatter_path,
+        "cdf_path": cdf_path,
+        "heatmap_path": heatmap_path,
+        "grid_path": grid_path,
+        "uniform_occupancy_rate": uniform_occ_rate,
+        "biased_occupancy_rate": biased_occ_rate,
+        "uniform_pre_cfd_score": metrics_uniform["pre_cfd_score"],
+        "biased_pre_cfd_score": metrics_biased["pre_cfd_score"],
+        "uniform_detail": metrics_uniform,
+        "biased_detail": metrics_biased,
     }
 
 
-def create_trial_result_dir(trials_dir, A, B, score):
+def create_trial_result_dir(trials_dir, bias_score, coverage_score, A_score):
     trials_dir.mkdir(exist_ok=True)
 
-    result_dir = trials_dir / f"{score:.6f}_{A:.6f}_{B:.6f}"
+    result_dir = trials_dir / f"bias{bias_score:.4f}_cvrg{coverage_score:.4f}_A{A_score:.4f}"
     result_dir.mkdir(exist_ok=True)
 
     return result_dir
@@ -1232,12 +1586,40 @@ print(f"mean_group_min_distance: {df_trials.loc[0, 'mean_group_min_distance']:.6
 print(f"global_mean_nn_distance: {df_trials.loc[0, 'global_mean_nn_distance']:.6f}")
 
 
-result_dir = create_trial_result_dir(trials_dir, best_A, best_q10, best_score)
+# 최적 seed로 최종 DOE 생성 (폴더명 결정을 위해 먼저 생성)
+df_doe, X_unit_best, groups_best = build_initial_doe(
+    continuous_vars=continuous_vars,
+    discrete_vars=discrete_vars,
+    samples_per_discrete_combination=samples_per_discrete_combination,
+    seed=best_seed
+)
+
+# 폴더명 결정을 위해 biased 샘플의 pre-CFD 점수 먼저 계산
+df_biased_for_score, _ = generate_lhs_samples(
+    continuous_vars=continuous_vars,
+    n_samples=len(df_doe),
+    seed=best_seed,
+    use_bias=True
+)
+biased_metrics_for_folder = compute_pre_cfd_sampling_scores(
+    df_sample=df_biased_for_score,
+    continuous_vars=continuous_vars,
+    bias_rules=bias_sampling_rules
+)
+
+bias_score_for_folder = biased_metrics_for_folder["bias_adherence_score"]
+coverage_score_for_folder = biased_metrics_for_folder["coverage_score"]
+
+result_dir = create_trial_result_dir(
+    trials_dir,
+    bias_score=bias_score_for_folder,
+    coverage_score=coverage_score_for_folder,
+    A_score=best_A
+)
 output_csv_path = result_dir / output_csv
 optuna_result_csv_path = result_dir / optuna_result_csv
 group_distance_csv_path = result_dir / group_distance_csv
-contour_plot_path = result_dir / "seed_optimization_contour.png"
-group_bar_plot_path = result_dir / "group_min_distance_bar.png"
+contour_plot_path = result_dir / "3_A_seed_optimization_contour.png"
 
 print(f"\n결과 저장 폴더: {result_dir}")
 
@@ -1251,14 +1633,6 @@ df_trials.to_csv(
 
 print(f"\nOptuna 결과 저장 완료: {optuna_result_csv_path}")
 
-
-# 최적 seed로 최종 DOE 생성
-df_doe, X_unit_best, groups_best = build_initial_doe(
-    continuous_vars=continuous_vars,
-    discrete_vars=discrete_vars,
-    samples_per_discrete_combination=samples_per_discrete_combination,
-    seed=best_seed
-)
 
 df_doe.to_csv(
     output_csv_path,
@@ -1280,9 +1654,30 @@ comparison_paths = save_sampling_comparison_plots(
 )
 
 print(f"\n샘플링 비교 요약 저장 완료: {comparison_paths['summary_path']}")
-print(f"샘플링 비교 histogram 저장 완료: {comparison_paths['hist_path']}")
+print(f"1_bias_histogram 저장 완료: {comparison_paths['hist_path']}")
 if comparison_paths["scatter_path"] is not None:
-    print(f"샘플링 비교 scatter 저장 완료: {comparison_paths['scatter_path']}")
+    print(f"1_bias_scatter 저장 완료: {comparison_paths['scatter_path']}")
+print(f"2_coverage_CDF 저장 완료: {comparison_paths['cdf_path']}")
+
+print("\nPre-CFD Sampling Score (출력값 없이 입력분포만으로 평가)")
+print(f"Uniform pre_cfd_score: {comparison_paths['uniform_pre_cfd_score']:.6f}")
+print(f"Biased  pre_cfd_score: {comparison_paths['biased_pre_cfd_score']:.6f}")
+
+uniform_detail = comparison_paths["uniform_detail"]
+biased_detail = comparison_paths["biased_detail"]
+
+print(
+    "Uniform detail: "
+    f"coverage={uniform_detail['coverage_score']:.6f}, "
+    f"diversity={uniform_detail['diversity_score']:.6f}, "
+    f"bias_adherence={uniform_detail['bias_adherence_score']:.6f}"
+)
+print(
+    "Biased detail:  "
+    f"coverage={biased_detail['coverage_score']:.6f}, "
+    f"diversity={biased_detail['diversity_score']:.6f}, "
+    f"bias_adherence={biased_detail['bias_adherence_score']:.6f}"
+)
 
 
 # 시각화 실행
@@ -1291,7 +1686,7 @@ plot_score_contour(df_trials, save_path=contour_plot_path)
 df_group_dist = plot_group_min_distance_bar(
     X_unit_best,
     groups_best,
-    save_path=group_bar_plot_path
+    save_path=None
 )
 
 df_group_dist.to_csv(
@@ -1301,6 +1696,5 @@ df_group_dist.to_csv(
 )
 
 print(f"\n조합별 minimum distance 저장 완료: {group_distance_csv_path}")
-print(f"Contour plot 저장 완료: {contour_plot_path}")
-print(f"Group bar plot 저장 완료: {group_bar_plot_path}")
+print(f"3_A_seed_optimization_contour 저장 완료: {contour_plot_path}")
 print(df_group_dist.head())
