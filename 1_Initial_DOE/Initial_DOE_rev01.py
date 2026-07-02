@@ -31,7 +31,7 @@ continuous_vars = {
     # "Cell_H": (300, 600),
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
-    "Barrier_Thx": (0.5, 2.5),
+    "Barrier_Thx": (0.25, 2.5),
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
