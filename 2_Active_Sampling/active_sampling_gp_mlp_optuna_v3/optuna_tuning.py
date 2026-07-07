@@ -38,7 +38,7 @@ def tune_gpc_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
         params = {
             "kernel": trial.suggest_categorical("kernel", ["RBF", "Matern32", "Matern52"]),
             "constant": trial.suggest_float("constant", 0.1, 10.0, log=True),
-            "length_scale": trial.suggest_float("length_scale", 0.05, 10.0, log=True),
+            "length_scale": trial.suggest_float("length_scale", 0.6, 4.0, log=True),
             "n_restarts_optimizer": 1,
         }
         res = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params, random_state=config.RANDOM_SEED)
@@ -141,7 +141,7 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
         params = {
             "kernel": trial.suggest_categorical("kernel", ["RBF", "Matern32", "Matern52"]),
             "constant": trial.suggest_float("constant", 0.1, 10.0, log=True),
-            "length_scale": trial.suggest_float("length_scale", 0.05, 10.0, log=True),
+            "length_scale": trial.suggest_float("length_scale", 0.6, 4.0, log=True),
             "noise_level": trial.suggest_float("noise_level", 1e-7, 1e-2, log=True),
             "alpha": trial.suggest_float("alpha", 1e-10, 1e-4, log=True),
             "normalize_y": trial.suggest_categorical("normalize_y", [True, False]),

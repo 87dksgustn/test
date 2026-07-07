@@ -7,7 +7,7 @@ from pathlib import Path
 INPUT_CSV = "initial_dataset.csv"
 
 CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
-DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type", "I_Cell_Barrier"]
+DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
@@ -40,9 +40,9 @@ EXCLUDED_REFERENCE_RANGES = {
 }
 
 DISCRETE_LEVELS = {
-    "B_Barrier_Type": ["A1", "A2", "S1", "S2", "S3"],
-    "D_Barrier_Outer_Type": ["S1", "S2", "S3", "P"],
-    "I_Cell_Barrier": ["1CP", "2CP"],
+    "B_Barrier_Type": ["A1", "A2", "Si1", "Si2", "Si3"],
+    "D_Barrier_Outer_Type": ["Si1", "Si2", "Si3", "PU"],
+    # "I_Cell_Barrier": ["1CP", "2CP"],
 }
 S_PREFIX = "S"
 
@@ -66,7 +66,7 @@ BUCKET_RATIO = {
 BOUNDARY_WEIGHTS_GP = {
     "boundary": 0.70,
     "clf_uncertainty": 0.00,
-    "local_sparsity": 0.15,
+    "local_sparsity": 0.10,
     "combo_priority": 0.15,
 }
 
@@ -95,7 +95,7 @@ UNCERTAINTY_SPARSE_WEIGHTS = {
 NOTP_WINDOW_LOW = 0.60
 NOTP_WINDOW_HIGH = 0.90
 NOTP_WINDOW_CENTER = 0.75
-MIN_BATCH_DISTANCE = 0.15
+MIN_BATCH_DISTANCE = 0.12
 
 # ============================================================
 # Model selection
@@ -132,13 +132,13 @@ ENABLE_OPTUNA_AUTO = True
 # If Optuna is not installed, code automatically skips tuning.
 # pip install optuna
 
-GP_OPTUNA_MIN_TOTAL_SAMPLES = 224
+GP_OPTUNA_MIN_TOTAL_SAMPLES = 100
 GP_OPTUNA_MIN_PASS_SAMPLES = 20
 GP_OPTUNA_MIN_FAIL_SAMPLES = 20
 GP_OPTUNA_N_TRIALS = 30
 GP_OPTUNA_TIMEOUT_SEC = None
 
-TMAX_OPTUNA_MIN_PASS_SAMPLES = 80
+TMAX_OPTUNA_MIN_PASS_SAMPLES = 50
 TMAX_OPTUNA_N_TRIALS = 25
 TMAX_OPTUNA_TIMEOUT_SEC = None
 

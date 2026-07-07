@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .title { font: 700 34px 'Segoe UI', Arial, sans-serif; fill: #12263a; }
+      .subtitle { font: 500 16px 'Segoe UI', Arial, sans-serif; fill: #3a4a5e; }
+      .h { font: 700 18px 'Segoe UI', Arial, sans-serif; fill: #0f3557; }
+      .b { font: 500 14px 'Segoe UI', Arial, sans-serif; fill: #16324f; }
+      .small { font: 500 12px 'Segoe UI', Arial, sans-serif; fill: #425a70; }
+      .card { fill: #f7fbff; stroke: #8fb3d9; stroke-width: 2; rx: 14; ry: 14; }
+      .decision { fill: #fff8eb; stroke: #d3a24f; stroke-width: 2; rx: 14; ry: 14; }
+      .output { fill: #eefaf0; stroke: #68a878; stroke-width: 2; rx: 14; ry: 14; }
+      .kpi { fill: #f3f1ff; stroke: #8b7ddb; stroke-width: 2; rx: 10; ry: 10; }
+      .arrow { stroke: #355b84; stroke-width: 2.5; fill: none; marker-end: url(#m); }
+      .dash { stroke-dasharray: 7 5; }
+    </style>
+    <marker id="m" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <polygon points="0,0 10,5 0,10" fill="#355b84" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="900" fill="#ffffff"/>
+
+  <text x="42" y="56" class="title">Active Sampling Pipeline (One-Page Overview)</text>
+  <text x="42" y="84" class="subtitle">From data loading to final 28-point batch selection with decision logic</text>
+
+  <rect class="card" x="40" y="120" width="280" height="150"/>
+  <text x="58" y="150" class="h">1) Data Input &amp; Validation</text>
+  <text x="58" y="178" class="b">- Load labeled dataset</text>
+  <text x="58" y="200" class="b">- Check required columns</text>
+  <text x="58" y="222" class="b">- Validate TP/NoTP labels</text>
+  <text x="58" y="246" class="small">Fail fast if schema or labels are invalid</text>
+
+  <rect class="card" x="360" y="120" width="300" height="150"/>
+  <text x="378" y="150" class="h">2) Discrete Space Setup</text>
+  <text x="378" y="178" class="b">- Generate valid discrete combos</text>
+  <text x="378" y="200" class="b">- Attach discrete_combo_id to rows</text>
+  <text x="378" y="222" class="b">- Export combo diagnostics</text>
+  <text x="378" y="246" class="small">Current run: 14 valid combos</text>
+
+  <rect class="card" x="700" y="120" width="320" height="150"/>
+  <text x="718" y="150" class="h">3) Feature Engineering</text>
+  <text x="718" y="178" class="b">- Standardize continuous features</text>
+  <text x="718" y="200" class="b">- One-hot encode discrete features</text>
+  <text x="718" y="222" class="b">- Build X, y_class, y_tmax</text>
+  <text x="718" y="246" class="small">Same preprocessor used for train and candidates</text>
+
+  <rect class="decision" x="1060" y="120" width="500" height="150"/>
+  <text x="1078" y="150" class="h">4) Optuna Eligibility Gate</text>
+  <text x="1078" y="178" class="b">- Check install flags + sample thresholds</text>
+  <text x="1078" y="200" class="b">- GP / MLP / Tmax tuning run only if eligible</text>
+  <text x="1078" y="222" class="b">- Else skip and use default params</text>
+  <text x="1078" y="246" class="small">Current run: all skipped (data below thresholds)</text>
+
+  <rect class="decision" x="40" y="330" width="470" height="170"/>
+  <text x="58" y="360" class="h">5) Model Selection (CV-Based)</text>
+  <text x="58" y="388" class="b">- Run GP CV first (CV_SPLITS=5)</text>
+  <text x="58" y="410" class="b">- MLP eligibility check (size, class balance, torch, combo floor)</text>
+  <text x="58" y="432" class="b">- If eligible: compare stable_score with margin</text>
+  <text x="58" y="454" class="b">- If not eligible: fallback to GP</text>
+  <text x="58" y="480" class="small">Current run: GP selected, MLP not eligible</text>
+
+  <rect class="kpi" x="540" y="330" width="240" height="170"/>
+  <text x="560" y="360" class="h">Stable Score</text>
+  <text x="560" y="390" class="b">weighted_mean</text>
+  <text x="560" y="412" class="b">- penalty * weighted_std</text>
+  <text x="560" y="442" class="small">weights: TP recall 0.70</text>
+  <text x="560" y="462" class="small">         TP F1     0.30</text>
+  <text x="560" y="482" class="small">penalty (CV_STD_PENALTY)=0.50</text>
+
+  <rect class="card" x="820" y="330" width="360" height="170"/>
+  <text x="838" y="360" class="h">6) Candidate Pool Generation</text>
+  <text x="838" y="388" class="b">- LHS sampling per valid combo</text>
+  <text x="838" y="410" class="b">- Apply excluded reference ranges</text>
+  <text x="838" y="432" class="b">- Build transformed candidate matrix</text>
+  <text x="838" y="456" class="small">Current run: 40,788 candidates after exclusion</text>
+
+  <rect class="card" x="1220" y="330" width="340" height="170"/>
+  <text x="1238" y="360" class="h">7) Acquisition Scoring</text>
+  <text x="1238" y="388" class="b">Per candidate compute:</text>
+  <text x="1238" y="410" class="b">- boundary score</text>
+  <text x="1238" y="432" class="b">- notp_high_tmax score</text>
+  <text x="1238" y="454" class="b">- uncertainty_sparse score</text>
+  <text x="1238" y="478" class="small">Uses local sparsity + combo priority terms</text>
+
+  <rect class="decision" x="220" y="570" width="520" height="220"/>
+  <text x="238" y="600" class="h">8) Batch Selection with Constraints</text>
+  <text x="238" y="630" class="b">- Allocate 28 by bucket ratio</text>
+  <text x="238" y="652" class="b">  boundary 60%, notp_high_tmax 30%,</text>
+  <text x="238" y="674" class="b">  uncertainty_sparse 7%, random_check 3%</text>
+  <text x="238" y="698" class="b">- Greedy pick by bucket score ranking</text>
+  <text x="238" y="720" class="b">- Enforce per-combo max samples</text>
+  <text x="238" y="742" class="b">- Enforce min distance in batch (0.15)</text>
+  <text x="238" y="766" class="small">If shortage: fill with mixed acquisition score</text>
+
+  <rect class="output" x="800" y="570" width="760" height="220"/>
+  <text x="818" y="600" class="h">9) Final Output (Current Run)</text>
+  <text x="818" y="630" class="b">- Final selected points: 28</text>
+  <text x="818" y="652" class="b">- Bucket split: 17 / 8 / 2 / 1</text>
+  <text x="818" y="674" class="b">- Model kind used for scoring: GP (all 28)</text>
+  <text x="818" y="696" class="b">- Saved files:</text>
+  <text x="848" y="720" class="small">next_sampling_candidates.csv</text>
+  <text x="848" y="740" class="small">scored_candidate_pool_preview.csv</text>
+  <text x="848" y="760" class="small">model_selection_report.json, optuna_report.json</text>
+
+  <path class="arrow" d="M320 195 L360 195"/>
+  <path class="arrow" d="M660 195 L700 195"/>
+  <path class="arrow" d="M1020 195 L1060 195"/>
+
+  <path class="arrow" d="M280 270 L280 330"/>
+  <path class="arrow" d="M940 270 L940 330"/>
+  <path class="arrow dash" d="M1310 270 L1310 330"/>
+
+  <path class="arrow" d="M510 415 L540 415"/>
+  <path class="arrow" d="M780 415 L820 415"/>
+  <path class="arrow" d="M1180 415 L1220 415"/>
+
+  <path class="arrow" d="M1180 500 L500 570"/>
+  <path class="arrow" d="M740 680 L800 680"/>
+
+  <text x="40" y="860" class="small">Decision flow summary: Validate -> Build space -> Preprocess -> (Optional tuning) -> Select model -> Score candidates -> Constrained 28-point selection</text>
+</svg>
