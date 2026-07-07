@@ -23,25 +23,53 @@ def far_enough(x, selected_idx, x_pool, min_dist):
     if not selected_idx: return True
     return bool(np.min(np.linalg.norm(x_pool[selected_idx] - x, axis=1)) >= min_dist)
 
-def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, rng):
+def far_enough_local(pool, idx, selected_idx, cols, min_dist):
+    if not selected_idx:
+        return True
+    x = pool.loc[idx, cols].to_numpy(dtype=float)
+    y = pool.loc[selected_idx, cols].to_numpy(dtype=float)
+    return bool(np.min(np.linalg.norm(y - x, axis=1)) >= min_dist)
+
+def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, rng, local_rule=None):
     chosen = []
     order = rng.permutation(pool.index.to_numpy()) if col == "random_score" else pool.sort_values(col, ascending=False).index.to_numpy()
+    local_cols = None
+    local_min_dist = None
+    if isinstance(local_rule, dict):
+        local_cols = local_rule.get("cols")
+        local_min_dist = local_rule.get("min_dist")
     for idx in order:
         if idx in selected or idx in chosen: continue
         current = combo_counts_after(labeled_df, pool.loc[selected+chosen] if selected or chosen else pool.iloc[0:0])
         if current.get(pool.at[idx, "discrete_combo_id"], 0) >= max_per_combo: continue
         if not far_enough(x_pool[idx], selected+chosen, x_pool, min_dist): continue
+        if local_cols and local_min_dist is not None and not far_enough_local(pool, idx, selected+chosen, local_cols, float(local_min_dist)):
+            continue
         chosen.append(idx)
         if len(chosen) >= n: break
     return chosen
 
-def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket_ratio, max_samples_per_combo, min_batch_distance, seed=42):
+def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket_ratio, max_samples_per_combo, min_batch_distance, seed=42, bucket_distance_multiplier=None, bucket_local_distance_rules=None):
     rng = np.random.default_rng(seed)
     pool = scored_pool.copy().reset_index(drop=True)
     pool["random_score"] = rng.random(len(pool))
+    bucket_distance_multiplier = bucket_distance_multiplier or {}
+    bucket_local_distance_rules = bucket_local_distance_rules or {}
     selected = []; buckets = {}
     for bucket, n in bucket_counts(batch_size, bucket_ratio).items():
-        ch = greedy(pool, x_pool_transformed, labeled_df, selected, n, acq_col(bucket), max_samples_per_combo, min_batch_distance, rng)
+        min_dist_for_bucket = float(min_batch_distance) * float(bucket_distance_multiplier.get(bucket, 1.0))
+        ch = greedy(
+            pool,
+            x_pool_transformed,
+            labeled_df,
+            selected,
+            n,
+            acq_col(bucket),
+            max_samples_per_combo,
+            min_dist_for_bucket,
+            rng,
+            bucket_local_distance_rules.get(bucket),
+        )
         selected += ch
         for i in ch: buckets[i] = bucket
     if len(selected) < batch_size:

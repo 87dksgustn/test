@@ -96,6 +96,20 @@ NOTP_WINDOW_LOW = 0.60
 NOTP_WINDOW_HIGH = 0.90
 NOTP_WINDOW_CENTER = 0.75
 MIN_BATCH_DISTANCE = 0.12
+# Apply stricter spacing for specific buckets during selection.
+BUCKET_DISTANCE_MULTIPLIER = {
+    "notp_high_tmax": 3.0,
+}
+BUCKET_LOCAL_DISTANCE_RULES = {
+    "boundary": {
+        "cols": ["A_Cell_D", "C_Barrier_Thx"],
+        "min_dist": 0.10,
+    },
+    "notp_high_tmax": {
+        "cols": ["A_Cell_D", "C_Barrier_Thx"],
+        "min_dist": 0.22,
+    }
+}
 
 # ============================================================
 # Model selection

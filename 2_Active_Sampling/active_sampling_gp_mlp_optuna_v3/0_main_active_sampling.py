@@ -1,4 +1,5 @@
 import json
+import itertools
 import logging
 import math
 import re
@@ -43,20 +44,91 @@ def create_try_dir(output_dir):
     return try_dir
 
 
-def save_celld_barrier_plot(base_df, selected_df, output_png):
-    x_col = "A_Cell_D"
-    y_col = "C_Barrier_Thx"
+def save_selected_overlay_plot(base_df, selected_df, x_col, y_col, output_png, title=None):
     fig, ax = plt.subplots(figsize=(10, 8), dpi=160)
     ax.scatter(base_df[x_col], base_df[y_col], s=24, c="#B0B7C3", alpha=0.55, label=f"Existing (n={len(base_df)})")
-    ax.scatter(selected_df[x_col], selected_df[y_col], s=80, c="#E76F51", edgecolors="black", linewidths=0.6, alpha=0.95, label=f"Selected (n={len(selected_df)})")
+
+    # Color selected points by bucket to make exploration/exploitation mix explicit.
+    bucket_order = list(selected_df["selected_bucket"].astype("category").cat.categories)
+    cmap = plt.get_cmap("tab10")
+    for i, bucket in enumerate(bucket_order):
+        part = selected_df[selected_df["selected_bucket"] == bucket]
+        ax.scatter(
+            part[x_col],
+            part[y_col],
+            s=80,
+            color=cmap(i % getattr(cmap, "N", 10)),
+            edgecolors="black",
+            linewidths=0.6,
+            alpha=0.95,
+            label=f"{bucket} (n={len(part)})",
+        )
+
     for _, row in selected_df.iterrows():
         ax.text(row[x_col], row[y_col], str(int(row["sampling_rank"])), fontsize=7, color="#1f2937", alpha=0.8)
-    ax.set_title("Selected Points on Cell_D vs Barrier_Thx", fontsize=15, fontweight="bold")
-    ax.set_xlabel("A_Cell_D (Cell_D)")
-    ax.set_ylabel("C_Barrier_Thx (barrier_Thx)")
+    ax.set_title(title or f"Selected Points on {x_col} vs {y_col}", fontsize=15, fontweight="bold")
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
     ax.legend(frameon=True)
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+
+
+def save_all_continuous_pair_plots(base_df, selected_df, continuous_cols, output_dir):
+    written = []
+    for x_col, y_col in itertools.combinations(continuous_cols, 2):
+        if x_col == "A_Cell_D" and y_col == "C_Barrier_Thx":
+            out_name = "sampling_cellD_vs_barrierThx.png"
+            title = "Selected Points on Cell_D vs Barrier_Thx"
+        else:
+            x_slug = x_col.lower().replace("_", "")
+            y_slug = y_col.lower().replace("_", "")
+            out_name = f"sampling_{x_slug}_vs_{y_slug}.png"
+            title = None
+        out_path = Path(output_dir) / out_name
+        save_selected_overlay_plot(base_df, selected_df, x_col, y_col, out_path, title=title)
+        written.append(out_path)
+    return written
+
+
+def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, output_png):
+    pairs = list(itertools.combinations(continuous_cols, 2))
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12), dpi=170)
+    axes = axes.flatten()
+
+    bucket_order = list(selected_df["selected_bucket"].astype("category").cat.categories)
+    cmap = plt.get_cmap("tab10")
+
+    for ax, (x_col, y_col) in zip(axes, pairs):
+        ax.scatter(base_df[x_col], base_df[y_col], s=14, c="#B0B7C3", alpha=0.45, label=f"Existing (n={len(base_df)})")
+
+        for i, bucket in enumerate(bucket_order):
+            part = selected_df[selected_df["selected_bucket"] == bucket]
+            ax.scatter(
+                part[x_col],
+                part[y_col],
+                s=55,
+                color=cmap(i % getattr(cmap, "N", 10)),
+                edgecolors="black",
+                linewidths=0.4,
+                alpha=0.92,
+                label=f"{bucket} (n={len(part)})",
+            )
+
+        for _, row in selected_df.iterrows():
+            ax.text(row[x_col], row[y_col], str(int(row["sampling_rank"])), fontsize=6, color="#1f2937", alpha=0.75)
+
+        ax.set_title(f"{x_col} vs {y_col}", fontsize=11, fontweight="bold")
+        ax.set_xlabel(x_col, fontsize=9)
+        ax.set_ylabel(y_col, fontsize=9)
+        ax.grid(True, alpha=0.22)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=min(5, len(labels)), frameon=True, bbox_to_anchor=(0.5, 0.99))
+    fig.suptitle("Selected Samples Across All Continuous-Pair Projections", fontsize=18, fontweight="bold", y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(output_png, dpi=180)
     plt.close(fig)
 
@@ -168,7 +240,7 @@ def main():
     output_model_selection_json = try_dir / "model_selection_report.json"
     output_optuna_report_json = try_dir / "optuna_report.json"
     output_cv_fold_metrics_csv = try_dir / "cv_fold_metrics.csv"
-    output_celld_plot_png = try_dir / "sampling_cellD_vs_barrierThx.png"
+    output_pairs_dashboard_png = try_dir / "sampling_all_continuous_pairs_6panel.png"
     output_dashboard_png = try_dir / "sampling_selection_dashboard_1page.png"
 
     df = load_labeled_data(config.INPUT_CSV)
@@ -201,7 +273,18 @@ def main():
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, config)
     scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
-    selected = select_batch(scored, x_candidate, df, config.BATCH_SIZE, config.BUCKET_RATIO, config.MAX_SAMPLES_PER_COMBO, config.MIN_BATCH_DISTANCE, config.RANDOM_SEED)
+    selected = select_batch(
+        scored,
+        x_candidate,
+        df,
+        config.BATCH_SIZE,
+        config.BUCKET_RATIO,
+        config.MAX_SAMPLES_PER_COMBO,
+        config.MIN_BATCH_DISTANCE,
+        config.RANDOM_SEED,
+        getattr(config, "BUCKET_DISTANCE_MULTIPLIER", {}),
+        getattr(config, "BUCKET_LOCAL_DISTANCE_RULES", {}),
+    )
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
     score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]
     selected = selected[front + score_cols]
@@ -209,8 +292,8 @@ def main():
     print(f"[INFO] Saved next sampling candidates: {output_candidates_csv}")
     print(selected[["sampling_rank", "selected_bucket", "selected_model_kind", "discrete_combo_id", "p_tp", "p_notp", "tmax_pred_given_notp"]].head(20))
 
-    save_celld_barrier_plot(df, selected, output_celld_plot_png)
-    print(f"[INFO] Saved plot: {output_celld_plot_png}")
+    save_continuous_pairs_dashboard(df, selected, config.CONTINUOUS_COLS, output_pairs_dashboard_png)
+    print(f"[INFO] Saved continuous-pairs dashboard: {output_pairs_dashboard_png}")
     save_selection_dashboard(df, selected, diag, config, output_dashboard_png)
     print(f"[INFO] Saved dashboard: {output_dashboard_png}")
 
@@ -221,7 +304,7 @@ def main():
         output_cv_fold_metrics_csv.name,
         output_model_selection_json.name,
         output_optuna_report_json.name,
-        output_celld_plot_png.name,
+        output_pairs_dashboard_png.name,
         output_dashboard_png.name,
     ]
     (try_dir / "manifest.txt").write_text("\n".join(written), encoding="utf-8")
