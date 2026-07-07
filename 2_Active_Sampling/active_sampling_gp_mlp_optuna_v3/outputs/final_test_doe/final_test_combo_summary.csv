@@ -1,0 +1,15 @@
+﻿discrete_combo_id,B_Barrier_Type,D_Barrier_Outer_Type,boundary_operational,coverage_sanity,boundary_alloc_target,coverage_alloc_target,boundary_weight
+combo_001,Si1,PU,5,2,5,2,0.8
+combo_002,Si1,Si1,5,2,5,2,0.8
+combo_003,Si2,PU,5,2,5,2,0.6000000000000001
+combo_004,Si2,Si2,5,2,5,2,0.8
+combo_005,Si3,PU,5,3,5,3,1.0
+combo_006,Si3,Si3,5,3,5,3,1.0
+combo_007,A1,PU,5,2,5,2,0.8
+combo_008,A1,Si1,5,2,5,2,0.8
+combo_009,A1,Si2,5,2,5,2,0.6
+combo_010,A1,Si3,5,2,5,2,0.8
+combo_011,A2,PU,5,2,5,2,0.6000000000000001
+combo_012,A2,Si1,5,2,5,2,1.0
+combo_013,A2,Si2,5,2,5,2,0.8
+combo_014,A2,Si3,5,2,5,2,0.8

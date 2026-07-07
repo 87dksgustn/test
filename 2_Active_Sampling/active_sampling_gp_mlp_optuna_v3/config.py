@@ -26,9 +26,9 @@ FAIL_LABEL = TP_LABEL
 
 CONTINUOUS_BOUNDS = {
     "A_Cell_D": (8.0, 16.0),
-    "C_Barrier_Thx": (0.5, 3.0),
+    "C_Barrier_Thx": (0.25, 2.5),
     "E_Barrier_Outer_Thx": (1.1, 3.0),
-    "F_ThermalResin_Thx": (0.5, 3.0),
+    "F_ThermalResin_Thx": (0.5, 2.5),
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.
@@ -40,8 +40,8 @@ EXCLUDED_REFERENCE_RANGES = {
 }
 
 DISCRETE_LEVELS = {
-    "B_Barrier_Type": ["A1", "A2", "Si1", "Si2", "Si3"],
-    "D_Barrier_Outer_Type": ["Si1", "Si2", "Si3", "PU"],
+    "B_Barrier_Type": ["Si1", "Si2", "Si3", "A1", "A2"],
+    "D_Barrier_Outer_Type": ["PU", "Si1", "Si2", "Si3"],
     # "I_Cell_Barrier": ["1CP", "2CP"],
 }
 S_PREFIX = "S"

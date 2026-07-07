@@ -1,0 +1,91 @@
+{
+  "total_cases": 100,
+  "boundary_cases": 70,
+  "coverage_cases": 30,
+  "continuous_bounds": {
+    "A_Cell_D": [
+      8.0,
+      16.0
+    ],
+    "C_Barrier_Thx": [
+      0.25,
+      2.5
+    ],
+    "E_Barrier_Outer_Thx": [
+      1.1,
+      3.0
+    ],
+    "F_ThermalResin_Thx": [
+      0.5,
+      2.5
+    ]
+  },
+  "excluded_reference_ranges": {
+    "A_Cell_D": {
+      "center": 12.4,
+      "half_width": 0.01
+    },
+    "C_Barrier_Thx": {
+      "center": 0.85,
+      "half_width": 0.01
+    },
+    "E_Barrier_Outer_Thx": {
+      "center": 2.0,
+      "half_width": 0.01
+    },
+    "F_ThermalResin_Thx": {
+      "center": 1.0,
+      "half_width": 0.01
+    }
+  },
+  "discrete_levels": {
+    "B_Barrier_Type": [
+      "Si1",
+      "Si2",
+      "Si3",
+      "A1",
+      "A2"
+    ],
+    "D_Barrier_Outer_Type": [
+      "PU",
+      "Si1",
+      "Si2",
+      "Si3"
+    ]
+  },
+  "boundary_pool_multiplier": 30,
+  "boundary_neighbors": 5,
+  "normalized_min_distance": 0.1,
+  "combo_boundary_alloc": {
+    "combo_001": 5,
+    "combo_002": 5,
+    "combo_003": 5,
+    "combo_004": 5,
+    "combo_005": 5,
+    "combo_006": 5,
+    "combo_007": 5,
+    "combo_008": 5,
+    "combo_009": 5,
+    "combo_010": 5,
+    "combo_011": 5,
+    "combo_012": 5,
+    "combo_013": 5,
+    "combo_014": 5
+  },
+  "combo_coverage_alloc": {
+    "combo_001": 2,
+    "combo_002": 2,
+    "combo_003": 2,
+    "combo_004": 2,
+    "combo_005": 3,
+    "combo_006": 3,
+    "combo_007": 2,
+    "combo_008": 2,
+    "combo_009": 2,
+    "combo_010": 2,
+    "combo_011": 2,
+    "combo_012": 2,
+    "combo_013": 2,
+    "combo_014": 2
+  }
+}
