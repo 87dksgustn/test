@@ -36,7 +36,7 @@ def bin_label_for_value(v, bins, labels):
             return labels[i]
     return None
 
-def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, rng, local_rule=None, bin_quota_rule=None):
+def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, rng, local_rule=None, bin_quota_rule=None, ptp_bound=None):
     chosen = []
     order = rng.permutation(pool.index.to_numpy()) if col == "random_score" else pool.sort_values(col, ascending=False).index.to_numpy()
     local_cols = None
@@ -55,10 +55,21 @@ def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, 
         quota_labels = list(bin_quota_rule.get("labels", []))
         quota_by_label = dict(bin_quota_rule.get("quota_by_label", {}))
         quota_counts = {k: 0 for k in quota_by_label.keys()}
+    ptp_min = None
+    ptp_max = None
+    if isinstance(ptp_bound, dict):
+        ptp_min = ptp_bound.get("min")
+        ptp_max = ptp_bound.get("max")
     for idx in order:
         if idx in selected or idx in chosen: continue
         current = combo_counts_after(labeled_df, pool.loc[selected+chosen] if selected or chosen else pool.iloc[0:0])
         if current.get(pool.at[idx, "discrete_combo_id"], 0) >= max_per_combo: continue
+        if "p_tp" in pool.columns:
+            p = float(pool.at[idx, "p_tp"])
+            if ptp_min is not None and p < float(ptp_min):
+                continue
+            if ptp_max is not None and p > float(ptp_max):
+                continue
         quota_label = None
         if quota_col and quota_bins and quota_labels and quota_by_label:
             quota_label = bin_label_for_value(pool.at[idx, quota_col], quota_bins, quota_labels)
@@ -75,13 +86,14 @@ def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, 
         if len(chosen) >= n: break
     return chosen
 
-def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket_ratio, max_samples_per_combo, min_batch_distance, seed=42, bucket_distance_multiplier=None, bucket_local_distance_rules=None, bucket_bin_quota_rules=None):
+def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket_ratio, max_samples_per_combo, min_batch_distance, seed=42, bucket_distance_multiplier=None, bucket_local_distance_rules=None, bucket_bin_quota_rules=None, bucket_ptp_bounds=None):
     rng = np.random.default_rng(seed)
     pool = scored_pool.copy().reset_index(drop=True)
     pool["random_score"] = rng.random(len(pool))
     bucket_distance_multiplier = bucket_distance_multiplier or {}
     bucket_local_distance_rules = bucket_local_distance_rules or {}
     bucket_bin_quota_rules = bucket_bin_quota_rules or {}
+    bucket_ptp_bounds = bucket_ptp_bounds or {}
     selected = []; buckets = {}
     for bucket, n in bucket_counts(batch_size, bucket_ratio).items():
         min_dist_for_bucket = float(min_batch_distance) * float(bucket_distance_multiplier.get(bucket, 1.0))
@@ -97,6 +109,7 @@ def select_batch(scored_pool, x_pool_transformed, labeled_df, batch_size, bucket
             rng,
             bucket_local_distance_rules.get(bucket),
             bucket_bin_quota_rules.get(bucket),
+            bucket_ptp_bounds.get(bucket),
         )
         selected += ch
         for i in ch: buckets[i] = bucket

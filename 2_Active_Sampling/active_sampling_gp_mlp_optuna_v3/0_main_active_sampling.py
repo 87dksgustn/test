@@ -49,7 +49,10 @@ def save_selected_overlay_plot(base_df, selected_df, x_col, y_col, output_png, t
     ax.scatter(base_df[x_col], base_df[y_col], s=24, c="#B0B7C3", alpha=0.55, label=f"Existing (n={len(base_df)})")
 
     # Color selected points by bucket to make exploration/exploitation mix explicit.
-    bucket_order = list(selected_df["selected_bucket"].astype("category").cat.categories)
+    present_buckets = list(pd.unique(selected_df["selected_bucket"].dropna()))
+    preferred = [b for b in config.BUCKET_RATIO.keys() if b in present_buckets]
+    extras = [b for b in present_buckets if b not in preferred]
+    bucket_order = preferred + extras
     cmap = plt.get_cmap("tab10")
     for i, bucket in enumerate(bucket_order):
         part = selected_df[selected_df["selected_bucket"] == bucket]
@@ -98,7 +101,10 @@ def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, outpu
     fig, axes = plt.subplots(2, 3, figsize=(20, 14), dpi=170)
     axes = axes.flatten()
 
-    bucket_order = list(selected_df["selected_bucket"].astype("category").cat.categories)
+    present_buckets = list(pd.unique(selected_df["selected_bucket"].dropna()))
+    preferred = [b for b in config.BUCKET_RATIO.keys() if b in present_buckets]
+    extras = [b for b in present_buckets if b not in preferred]
+    bucket_order = preferred + extras
     cmap = plt.get_cmap("tab10")
 
     for ax, (x_col, y_col) in zip(axes, pairs):
@@ -203,13 +209,38 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
 
     ax2 = plt.subplot(2, 2, 2)
     ex = x_all[x_all["_group"] == "existing"]
-    se = x_all[x_all["_group"] == "selected"]
+    se = x_all[x_all["_group"] == "selected"].copy()
+    se["selected_bucket"] = selected_df["selected_bucket"].to_numpy()
+    se["sampling_rank"] = selected_df["sampling_rank"].to_numpy()
     ax2.scatter(ex["PC1"], ex["PC2"], s=28, c="#B0B7C3", alpha=0.55, label=f"Existing (n={len(ex)})")
-    ax2.scatter(se["PC1"], se["PC2"], s=90, c="#E76F51", edgecolors="black", linewidths=0.5, alpha=0.95, label=f"Selected (n={len(se)})")
+
+    present_buckets = list(pd.unique(se["selected_bucket"].dropna()))
+    preferred = [b for b in config.BUCKET_RATIO.keys() if b in present_buckets]
+    extras = [b for b in present_buckets if b not in preferred]
+    bucket_order = preferred + extras
+    cmap = plt.get_cmap("tab10")
+    bucket_color_map = {b: cmap(i % getattr(cmap, "N", 10)) for i, b in enumerate(bucket_order)}
+    for i, bucket in enumerate(bucket_order):
+        part = se[se["selected_bucket"] == bucket]
+        color = bucket_color_map[bucket]
+        ax2.scatter(
+            part["PC1"],
+            part["PC2"],
+            s=90,
+            color=color,
+            edgecolors="black",
+            linewidths=0.5,
+            alpha=0.95,
+            label=f"{bucket} (n={len(part)})",
+        )
+        short = bucket.replace("_", "")[:5]
+        for _, row in part.iterrows():
+            ax2.text(row["PC1"], row["PC2"], f"{int(row['sampling_rank'])}:{short}", fontsize=6.5, color="#1f2937", alpha=0.9)
+
     ax2.set_xlabel("PC1")
     ax2.set_ylabel("PC2")
     ax2.set_title("2) Distribution Coverage (PCA View)")
-    ax2.legend(frameon=True, loc="best")
+    ax2.legend(frameon=True, loc="best", fontsize=8, title="Bucket")
 
     ax3 = plt.subplot(2, 2, 3)
     idx = np.arange(len(diag_plot))
@@ -224,19 +255,26 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
     ax3.legend(frameon=True)
 
     ax4 = plt.subplot(2, 2, 4)
-    size = 120 + 280 * (selected_df["local_sparsity"].fillna(0).clip(0, 1).to_numpy())
-    bucket_codes = selected_df["selected_bucket"].astype("category").cat.codes
-    ax4.scatter(selected_df["p_tp"], selected_df["tmax_pred_given_notp"], c=bucket_codes, s=size, cmap="viridis", alpha=0.85, edgecolors="black", linewidths=0.4)
+    plot_df = selected_df.copy()
+    plot_df["_size"] = 120 + 280 * (plot_df["local_sparsity"].fillna(0).clip(0, 1).to_numpy())
+    for bucket in bucket_order:
+        part = plot_df[plot_df["selected_bucket"] == bucket]
+        if len(part) == 0:
+            continue
+        ax4.scatter(
+            part["p_tp"],
+            part["tmax_pred_given_notp"],
+            s=part["_size"],
+            color=bucket_color_map[bucket],
+            alpha=0.85,
+            edgecolors="black",
+            linewidths=0.4,
+            label=f"{bucket} (n={len(part)})",
+        )
     ax4.set_title("4) Selected Points: Risk-Reward Map")
     ax4.set_xlabel("Predicted TP probability (p_tp)")
     ax4.set_ylabel("Predicted Tmax given NoTP")
-
-    cats = list(selected_df["selected_bucket"].astype("category").cat.categories)
-    handles = [
-        plt.Line2D([0], [0], marker="o", color="w", label=cat, markerfacecolor=plt.cm.viridis(i / max(1, len(cats) - 1)), markeredgecolor="black", markersize=8)
-        for i, cat in enumerate(cats)
-    ]
-    ax4.legend(handles=handles, title="Bucket", loc="best", frameon=True)
+    ax4.legend(title="Bucket", loc="best", frameon=True)
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig.savefig(output_png, dpi=180)
@@ -412,6 +450,7 @@ def main():
         getattr(config, "BUCKET_DISTANCE_MULTIPLIER", {}),
         getattr(config, "BUCKET_LOCAL_DISTANCE_RULES", {}),
         bucket_bin_quota_rules,
+        getattr(config, "BUCKET_PTP_BOUNDS", {}),
     )
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
     score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]

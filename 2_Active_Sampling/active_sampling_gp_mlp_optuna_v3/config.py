@@ -78,8 +78,8 @@ BOUNDARY_WEIGHTS_MLP = {
 }
 
 NOTP_HIGH_TMAX_WEIGHTS = {
-    "tmax": 0.40,
-    "notp_window": 0.30,
+    "tmax": 0.70,  # Ver3: notp_window 제거분 이관 (0.40 → 0.70)
+    "notp_window": 0.00,  # Ver3: 0.25 집중 무의미, 제거
     "tmax_uncertainty": 0.10,
     "local_sparsity": 0.10,
     "combo_priority": 0.10,
@@ -109,6 +109,13 @@ BUCKET_LOCAL_DISTANCE_RULES = {
         "cols": ["A_Cell_D", "C_Barrier_Thx"],
         "min_dist": 0.22,
     }
+}
+
+# Optional hard p_tp bounds by bucket.
+# Candidates outside each bucket range are skipped during greedy selection.
+BUCKET_PTP_BOUNDS = {
+    "boundary": {"min": 0.40, "max": 0.60},
+    "notp_high_tmax": {"min": 0.10, "max": 0.50},
 }
 
 # Dynamic quota for notp_high_tmax by Cell_D bins.
