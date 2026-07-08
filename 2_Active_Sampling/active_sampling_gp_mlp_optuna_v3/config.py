@@ -57,8 +57,8 @@ MIN_SAMPLES_PER_COMBO = 8
 MAX_SAMPLES_PER_COMBO = 40
 
 BUCKET_RATIO = {
-    "boundary": 0.60,
-    "notp_high_tmax": 0.30,
+    "boundary": 0.75,
+    "notp_high_tmax": 0.15,
     "uncertainty_sparse": 0.07,
     "random_check": 0.03,
 }
@@ -114,7 +114,7 @@ BUCKET_LOCAL_DISTANCE_RULES = {
 # Optional hard p_tp bounds by bucket.
 # Candidates outside each bucket range are skipped during greedy selection.
 BUCKET_PTP_BOUNDS = {
-    "boundary": {"min": 0.40, "max": 0.60},
+    "boundary": {"min": 0.50, "max": 0.70},
     "notp_high_tmax": {"min": 0.10, "max": 0.50},
 }
 
