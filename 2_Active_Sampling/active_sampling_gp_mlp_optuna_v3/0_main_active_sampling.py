@@ -22,7 +22,7 @@ from optuna_tuning import maybe_tune_models
 from model_selector import select_and_fit_model
 from evaluation import fold_metrics_to_df
 from acquisition import compute_acquisition_scores
-from batch_selector import select_batch
+from batch_selector import bucket_counts, select_batch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,7 +95,7 @@ def save_all_continuous_pair_plots(base_df, selected_df, continuous_cols, output
 
 def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, output_png):
     pairs = list(itertools.combinations(continuous_cols, 2))
-    fig, axes = plt.subplots(2, 3, figsize=(20, 12), dpi=170)
+    fig, axes = plt.subplots(2, 3, figsize=(20, 14), dpi=170)
     axes = axes.flatten()
 
     bucket_order = list(selected_df["selected_bucket"].astype("category").cat.categories)
@@ -124,12 +124,24 @@ def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, outpu
         ax.set_xlabel(x_col, fontsize=9)
         ax.set_ylabel(y_col, fontsize=9)
         ax.grid(True, alpha=0.22)
+        if hasattr(ax, "set_box_aspect"):
+            ax.set_box_aspect(1)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=min(5, len(labels)), frameon=True, bbox_to_anchor=(0.5, 0.99))
+    fig.subplots_adjust(bottom=0.16, top=0.93)
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
+        bbox_transform=fig.transFigure,
+        frameon=True,
+        title="Bucket",
+        fontsize=15,
+        ncol=min(5, len(labels)),
+    )
     fig.suptitle("Selected Samples Across All Continuous-Pair Projections", fontsize=18, fontweight="bold", y=0.995)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(output_png, dpi=180)
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -230,6 +242,46 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
     fig.savefig(output_png, dpi=180)
     plt.close(fig)
 
+def _count_from_ratio(total, labels, ratio_by_label):
+    raw = {k: total * float(ratio_by_label.get(k, 0.0)) for k in labels}
+    counts = {k: int(math.floor(v)) for k, v in raw.items()}
+    rem = int(total) - sum(counts.values())
+    order = sorted(labels, key=lambda k: raw[k] - counts[k], reverse=True)
+    for k in order[:rem]:
+        counts[k] += 1
+    return counts
+
+def build_notp_high_tmax_celld_quota(df, cfg, bucket_target_n):
+    if not bool(getattr(cfg, "NOTP_HIGHTMAX_USE_TP1_CELLD_RATIO", False)):
+        return None
+    col = getattr(cfg, "NOTP_HIGHTMAX_CELLD_COL", "A_Cell_D")
+    bins = list(getattr(cfg, "NOTP_HIGHTMAX_CELLD_BINS", []))
+    labels = list(getattr(cfg, "NOTP_HIGHTMAX_CELLD_BIN_LABELS", []))
+    if len(bins) < 2 or len(labels) != len(bins) - 1:
+        return None
+
+    use = df[[col, cfg.TPNoTP_COL]].copy()
+    use = use.dropna(subset=[col, cfg.TPNoTP_COL])
+    tp = use[use[cfg.TPNoTP_COL] == cfg.TP_LABEL]
+    if len(tp) == 0:
+        ratio = {k: 1.0 / len(labels) for k in labels}
+    else:
+        cat = pd.cut(tp[col], bins=bins, labels=labels, include_lowest=True, right=False)
+        cnt = tp.groupby(cat, observed=False).size().reindex(labels, fill_value=0)
+        total = int(cnt.sum())
+        ratio = {k: (float(cnt.loc[k]) / total if total > 0 else 1.0 / len(labels)) for k in labels}
+        if sum(ratio.values()) <= 0:
+            ratio = {k: 1.0 / len(labels) for k in labels}
+
+    quota = _count_from_ratio(int(bucket_target_n), labels, ratio)
+    return {
+        "col": col,
+        "bins": bins,
+        "labels": labels,
+        "quota_by_label": quota,
+        "ratio_by_label": ratio,
+    }
+
 def main():
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     try_dir = create_try_dir(config.OUTPUT_DIR)
@@ -273,6 +325,22 @@ def main():
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, config)
     scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
+    bucket_target_counts = bucket_counts(config.BATCH_SIZE, config.BUCKET_RATIO)
+    notp_target = int(bucket_target_counts.get("notp_high_tmax", 0))
+    bucket_bin_quota_rules = {}
+    quota_rule = build_notp_high_tmax_celld_quota(df, config, notp_target)
+    if quota_rule is not None:
+        bucket_bin_quota_rules["notp_high_tmax"] = {
+            "col": quota_rule["col"],
+            "bins": quota_rule["bins"],
+            "labels": quota_rule["labels"],
+            "quota_by_label": quota_rule["quota_by_label"],
+        }
+        print("[INFO] notp_high_tmax Cell_D ratio-by-bin:")
+        print(json.dumps(quota_rule["ratio_by_label"], indent=2, ensure_ascii=False))
+        print("[INFO] notp_high_tmax quota-by-bin:")
+        print(json.dumps(quota_rule["quota_by_label"], indent=2, ensure_ascii=False))
+
     selected = select_batch(
         scored,
         x_candidate,
@@ -284,6 +352,7 @@ def main():
         config.RANDOM_SEED,
         getattr(config, "BUCKET_DISTANCE_MULTIPLIER", {}),
         getattr(config, "BUCKET_LOCAL_DISTANCE_RULES", {}),
+        bucket_bin_quota_rules,
     )
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
     score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]

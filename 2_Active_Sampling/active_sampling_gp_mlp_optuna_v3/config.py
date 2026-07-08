@@ -111,6 +111,14 @@ BUCKET_LOCAL_DISTANCE_RULES = {
     }
 }
 
+# Dynamic quota for notp_high_tmax by Cell_D bins.
+# At each run, quota is recomputed from current labeled data as:
+#   TP_NoTP==TP_LABEL count per Cell_D bin / total TP_NoTP==TP_LABEL count
+NOTP_HIGHTMAX_USE_TP1_CELLD_RATIO = True
+NOTP_HIGHTMAX_CELLD_COL = "A_Cell_D"
+NOTP_HIGHTMAX_CELLD_BINS = [8.0, 10.0, 12.0, 14.0, 16.000001]
+NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
+
 # ============================================================
 # Model selection
 # ============================================================
