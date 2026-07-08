@@ -123,7 +123,7 @@ NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
 # - "hybrid_baseline": baseline-centered fixed zone ratios (recommended for operational baseline around 12.4)
 # - "tp_ratio_only": TP_NoTP==1 ratio-only quota by Cell_D bins
 # - "off": disable bucket bin quotas
-BUCKET_CELLD_QUOTA_MODE = "hybrid_baseline"
+BUCKET_CELLD_QUOTA_MODE = "tp_ratio_only"
 
 # Common TP-ratio quota settings (used in tp_ratio_only mode)
 TP_RATIO_CELLD_COL = "A_Cell_D"
