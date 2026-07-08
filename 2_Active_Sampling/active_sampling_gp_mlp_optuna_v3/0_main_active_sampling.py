@@ -251,12 +251,12 @@ def _count_from_ratio(total, labels, ratio_by_label):
         counts[k] += 1
     return counts
 
-def build_notp_high_tmax_celld_quota(df, cfg, bucket_target_n):
+def build_tp1_ratio_celld_quota(df, cfg, bucket_target_n):
     if not bool(getattr(cfg, "NOTP_HIGHTMAX_USE_TP1_CELLD_RATIO", False)):
         return None
-    col = getattr(cfg, "NOTP_HIGHTMAX_CELLD_COL", "A_Cell_D")
-    bins = list(getattr(cfg, "NOTP_HIGHTMAX_CELLD_BINS", []))
-    labels = list(getattr(cfg, "NOTP_HIGHTMAX_CELLD_BIN_LABELS", []))
+    col = getattr(cfg, "TP_RATIO_CELLD_COL", getattr(cfg, "NOTP_HIGHTMAX_CELLD_COL", "A_Cell_D"))
+    bins = list(getattr(cfg, "TP_RATIO_CELLD_BINS", getattr(cfg, "NOTP_HIGHTMAX_CELLD_BINS", [])))
+    labels = list(getattr(cfg, "TP_RATIO_CELLD_BIN_LABELS", getattr(cfg, "NOTP_HIGHTMAX_CELLD_BIN_LABELS", [])))
     if len(bins) < 2 or len(labels) != len(bins) - 1:
         return None
 
@@ -281,6 +281,78 @@ def build_notp_high_tmax_celld_quota(df, cfg, bucket_target_n):
         "quota_by_label": quota,
         "ratio_by_label": ratio,
     }
+
+def build_notp_high_tmax_celld_quota(df, cfg, bucket_target_n):
+    # Backward-compatible wrapper used by previous ad-hoc analysis snippets.
+    return build_tp1_ratio_celld_quota(df, cfg, bucket_target_n)
+
+def build_fixed_zone_quota(cfg, target_n, ratio_dict):
+    col = getattr(cfg, "HYBRID_CELLD_COL", "A_Cell_D")
+    bins = list(getattr(cfg, "HYBRID_CELLD_BINS", []))
+    labels = list(getattr(cfg, "HYBRID_CELLD_BIN_LABELS", []))
+    if len(bins) < 2 or len(labels) != len(bins) - 1:
+        return None
+    ratio = {k: float(ratio_dict.get(k, 0.0)) for k in labels}
+    s = sum(ratio.values())
+    if s <= 0:
+        ratio = {k: 1.0 / len(labels) for k in labels}
+    else:
+        ratio = {k: v / s for k, v in ratio.items()}
+    quota = _count_from_ratio(int(target_n), labels, ratio)
+    return {
+        "col": col,
+        "bins": bins,
+        "labels": labels,
+        "quota_by_label": quota,
+        "ratio_by_label": ratio,
+    }
+
+def build_bucket_bin_quota_rules(df, cfg, bucket_target_counts):
+    mode = str(getattr(cfg, "BUCKET_CELLD_QUOTA_MODE", "off")).strip().lower()
+    rules = {}
+
+    if mode == "tp_ratio_only":
+        for bucket in ["boundary", "notp_high_tmax"]:
+            q = build_tp1_ratio_celld_quota(df, cfg, int(bucket_target_counts.get(bucket, 0)))
+            if q is not None:
+                rules[bucket] = {
+                    "col": q["col"],
+                    "bins": q["bins"],
+                    "labels": q["labels"],
+                    "quota_by_label": q["quota_by_label"],
+                }
+                print(f"[INFO] {bucket} TP-ratio-by-bin:")
+                print(json.dumps(q["ratio_by_label"], indent=2, ensure_ascii=False))
+                print(f"[INFO] {bucket} quota-by-bin:")
+                print(json.dumps(q["quota_by_label"], indent=2, ensure_ascii=False))
+        return rules
+
+    if mode == "hybrid_baseline":
+        q_boundary = build_fixed_zone_quota(cfg, int(bucket_target_counts.get("boundary", 0)), getattr(cfg, "HYBRID_BOUNDARY_ZONE_RATIO", {}))
+        q_notp = build_fixed_zone_quota(cfg, int(bucket_target_counts.get("notp_high_tmax", 0)), getattr(cfg, "HYBRID_NOTP_HIGHTMAX_ZONE_RATIO", {}))
+        if q_boundary is not None:
+            rules["boundary"] = {
+                "col": q_boundary["col"],
+                "bins": q_boundary["bins"],
+                "labels": q_boundary["labels"],
+                "quota_by_label": q_boundary["quota_by_label"],
+            }
+            print("[INFO] boundary hybrid ratio-by-zone:")
+            print(json.dumps(q_boundary["ratio_by_label"], indent=2, ensure_ascii=False))
+            print("[INFO] boundary hybrid quota-by-zone:")
+            print(json.dumps(q_boundary["quota_by_label"], indent=2, ensure_ascii=False))
+        if q_notp is not None:
+            rules["notp_high_tmax"] = {
+                "col": q_notp["col"],
+                "bins": q_notp["bins"],
+                "labels": q_notp["labels"],
+                "quota_by_label": q_notp["quota_by_label"],
+            }
+            print("[INFO] notp_high_tmax hybrid ratio-by-zone:")
+            print(json.dumps(q_notp["ratio_by_label"], indent=2, ensure_ascii=False))
+            print("[INFO] notp_high_tmax hybrid quota-by-zone:")
+            print(json.dumps(q_notp["quota_by_label"], indent=2, ensure_ascii=False))
+    return rules
 
 def main():
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -326,20 +398,7 @@ def main():
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, config)
     scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
     bucket_target_counts = bucket_counts(config.BATCH_SIZE, config.BUCKET_RATIO)
-    notp_target = int(bucket_target_counts.get("notp_high_tmax", 0))
-    bucket_bin_quota_rules = {}
-    quota_rule = build_notp_high_tmax_celld_quota(df, config, notp_target)
-    if quota_rule is not None:
-        bucket_bin_quota_rules["notp_high_tmax"] = {
-            "col": quota_rule["col"],
-            "bins": quota_rule["bins"],
-            "labels": quota_rule["labels"],
-            "quota_by_label": quota_rule["quota_by_label"],
-        }
-        print("[INFO] notp_high_tmax Cell_D ratio-by-bin:")
-        print(json.dumps(quota_rule["ratio_by_label"], indent=2, ensure_ascii=False))
-        print("[INFO] notp_high_tmax quota-by-bin:")
-        print(json.dumps(quota_rule["quota_by_label"], indent=2, ensure_ascii=False))
+    bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
 
     selected = select_batch(
         scored,

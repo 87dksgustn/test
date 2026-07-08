@@ -119,6 +119,33 @@ NOTP_HIGHTMAX_CELLD_COL = "A_Cell_D"
 NOTP_HIGHTMAX_CELLD_BINS = [8.0, 10.0, 12.0, 14.0, 16.000001]
 NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
 
+# Bucket Cell_D quota mode:
+# - "hybrid_baseline": baseline-centered fixed zone ratios (recommended for operational baseline around 12.4)
+# - "tp_ratio_only": TP_NoTP==1 ratio-only quota by Cell_D bins
+# - "off": disable bucket bin quotas
+BUCKET_CELLD_QUOTA_MODE = "hybrid_baseline"
+
+# Common TP-ratio quota settings (used in tp_ratio_only mode)
+TP_RATIO_CELLD_COL = "A_Cell_D"
+TP_RATIO_CELLD_BINS = [8.0, 10.0, 12.0, 14.0, 16.000001]
+TP_RATIO_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
+
+# Hybrid baseline-centered quota settings
+BASELINE_CELLD = 12.4
+HYBRID_CELLD_COL = "A_Cell_D"
+HYBRID_CELLD_BINS = [8.0, 11.8, 13.0, 16.000001]
+HYBRID_CELLD_BIN_LABELS = ["low(8-11.8)", "near(11.8-13.0)", "high(13-16)"]
+HYBRID_BOUNDARY_ZONE_RATIO = {
+    "low(8-11.8)": 4,
+    "near(11.8-13.0)": 8,
+    "high(13-16)": 5,
+}
+HYBRID_NOTP_HIGHTMAX_ZONE_RATIO = {
+    "low(8-11.8)": 2,
+    "near(11.8-13.0)": 4,
+    "high(13-16)": 2,
+}
+
 # ============================================================
 # Model selection
 # ============================================================
