@@ -134,12 +134,13 @@ def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, outpu
             ax.set_box_aspect(1)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.subplots_adjust(bottom=0.16, top=0.93)
+    # Reserve enough room so bottom-row x-axis labels do not overlap the legend.
+    fig.subplots_adjust(bottom=0.10, top=0.93)
     fig.legend(
         handles,
         labels,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
+        bbox_to_anchor=(0.5, 0.010),
         bbox_transform=fig.transFigure,
         frameon=True,
         title="Bucket",
