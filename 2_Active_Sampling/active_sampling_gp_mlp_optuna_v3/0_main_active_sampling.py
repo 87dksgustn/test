@@ -4,6 +4,7 @@ import logging
 import math
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,6 +43,90 @@ def create_try_dir(output_dir):
     try_dir = Path(output_dir) / f"Try_{next_n}"
     try_dir.mkdir(parents=True, exist_ok=False)
     return try_dir
+
+
+def parse_try_index(try_dir):
+    m = re.match(r"^Try_(\d+)$", Path(try_dir).name)
+    return int(m.group(1)) if m else 1
+
+
+def normalized_range_stats(df, cfg):
+    vals = []
+    for col in cfg.CONTINUOUS_COLS:
+        lo, hi = cfg.CONTINUOUS_BOUNDS[col]
+        denom = float(hi) - float(lo)
+        if denom <= 0:
+            vals.append(0.0)
+            continue
+        rng = float(df[col].max()) - float(df[col].min())
+        vals.append(max(0.0, min(1.0, rng / denom)))
+    return {
+        "min_norm_range": float(min(vals)) if vals else 0.0,
+        "mean_norm_range": float(np.mean(vals)) if vals else 0.0,
+    }
+
+
+def make_effective_boundary_weights(cfg, try_dir, model_kind, labeled_df):
+    use_adaptive = bool(getattr(cfg, "ENABLE_ADAPTIVE_BOUNDARY_HYBRID", False))
+    base = dict(cfg.BOUNDARY_WEIGHTS_MLP if str(model_kind).lower() == "mlp" else cfg.BOUNDARY_WEIGHTS_GP)
+    if not use_adaptive:
+        return base
+
+    try_idx = parse_try_index(try_dir)
+    start_try = int(getattr(cfg, "ADAPTIVE_BOUNDARY_TRY_START", 1))
+    full_try = int(getattr(cfg, "ADAPTIVE_BOUNDARY_TRY_FULL", 8))
+    max_unc = float(getattr(cfg, "ADAPTIVE_BOUNDARY_CLF_UNC_MAX", 0.10))
+    guard_min = float(getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MIN_NORM_RANGE", 0.90))
+    guard_mean = float(getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MEAN_NORM_RANGE", 0.93))
+    guard_scale = float(getattr(cfg, "ADAPTIVE_BOUNDARY_GUARD_UNC_SCALE", 0.30))
+
+    if full_try <= start_try:
+        progress = 1.0
+    else:
+        progress = (try_idx - start_try) / float(full_try - start_try)
+    progress = max(0.0, min(1.0, progress))
+
+    cov = normalized_range_stats(labeled_df, cfg)
+    target_unc = max_unc * progress
+    if cov["min_norm_range"] < guard_min or cov["mean_norm_range"] < guard_mean:
+        target_unc *= guard_scale
+
+    keys_non_unc = ["boundary", "local_sparsity", "combo_priority"]
+    base_non_unc_sum = sum(float(base.get(k, 0.0)) for k in keys_non_unc)
+    remain = max(0.0, 1.0 - target_unc)
+    if base_non_unc_sum <= 1e-12:
+        eff = {
+            "boundary": remain,
+            "clf_uncertainty": target_unc,
+            "local_sparsity": 0.0,
+            "combo_priority": 0.0,
+        }
+    else:
+        eff = {k: remain * float(base.get(k, 0.0)) / base_non_unc_sum for k in keys_non_unc}
+        eff["clf_uncertainty"] = target_unc
+
+    logging.info(
+        "Adaptive boundary weights | try=%s model=%s progress=%.3f cov_min=%.3f cov_mean=%.3f -> %s",
+        try_idx,
+        model_kind,
+        progress,
+        cov["min_norm_range"],
+        cov["mean_norm_range"],
+        {k: round(v, 4) for k, v in eff.items()},
+    )
+    return eff
+
+
+def build_scoring_config(cfg, model_kind, effective_boundary_weights):
+    d = {k: v for k, v in vars(cfg).items() if not k.startswith("__")}
+    out = SimpleNamespace(**d)
+    out.BOUNDARY_WEIGHTS_GP = dict(cfg.BOUNDARY_WEIGHTS_GP)
+    out.BOUNDARY_WEIGHTS_MLP = dict(cfg.BOUNDARY_WEIGHTS_MLP)
+    if str(model_kind).lower() == "mlp":
+        out.BOUNDARY_WEIGHTS_MLP.update(effective_boundary_weights)
+    else:
+        out.BOUNDARY_WEIGHTS_GP.update(effective_boundary_weights)
+    return out
 
 
 def save_selected_overlay_plot(base_df, selected_df, x_col, y_col, output_png, title=None):
@@ -127,8 +212,8 @@ def save_continuous_pairs_dashboard(base_df, selected_df, continuous_cols, outpu
             ax.text(row[x_col], row[y_col], str(int(row["sampling_rank"])), fontsize=6, color="#1f2937", alpha=0.75)
 
         ax.set_title(f"{x_col} vs {y_col}", fontsize=11, fontweight="bold")
-        ax.set_xlabel(x_col, fontsize=9)
-        ax.set_ylabel(y_col, fontsize=9)
+        ax.set_xlabel(x_col, fontsize=15)
+        ax.set_ylabel(y_col, fontsize=15)
         ax.grid(True, alpha=0.22)
         if hasattr(ax, "set_box_aspect"):
             ax.set_box_aspect(1)
@@ -434,7 +519,9 @@ def main():
     pool = generate_candidate_pool(valid_combos, config.CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
     print(f"[INFO] Candidate pool size after exclusion filter: {len(pool)}")
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
-    scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, config)
+    effective_boundary_weights = make_effective_boundary_weights(config, try_dir, getattr(selected_model, "kind", "gp"), df)
+    scoring_cfg = build_scoring_config(config, getattr(selected_model, "kind", "gp"), effective_boundary_weights)
+    scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
     scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
     bucket_target_counts = bucket_counts(config.BATCH_SIZE, config.BUCKET_RATIO)
     bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
