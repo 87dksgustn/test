@@ -40,6 +40,14 @@ def predict_gp_outputs(models, x):
     p_notp = 1 - p_tp
     boundary = np.clip(1 - 2*np.abs(p_tp-0.5), 0, 1)
     clf_unc = np.zeros_like(boundary)
+    if getattr(models, "clf_ensemble", None):
+        tp_samples = []
+        for clf_i in models.clf_ensemble:
+            p_i = clf_i.predict_proba(x)
+            tp_i = p_i[:, list(clf_i.classes_).index(1)]
+            tp_samples.append(tp_i)
+        if tp_samples:
+            clf_unc = np.std(np.vstack(tp_samples), axis=0)
     if models.has_tmax_model:
         tpred, tstd = models.reg_tmax.predict(x, return_std=True)
     else:

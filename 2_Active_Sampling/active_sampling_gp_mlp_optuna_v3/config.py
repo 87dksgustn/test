@@ -66,9 +66,17 @@ BUCKET_RATIO = {
 BOUNDARY_WEIGHTS_GP = {
     "boundary": 0.70,
     "clf_uncertainty": 0.00,
-    "local_sparsity": 0.10,
+    "local_sparsity": 0.15,
     "combo_priority": 0.15,
 }
+
+# GP classifier uncertainty mode:
+# - "none": keep legacy behavior (clf_uncertainty=0 for GP path)
+# - "ensemble_std": train bootstrap GP classifiers and use std of p_tp
+GP_CLF_UNCERTAINTY_MODE = "ensemble_std"
+GP_CLF_ENSEMBLE_SIZE = 5
+GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
+GP_CLF_ENSEMBLE_STRATIFIED = True
 
 BOUNDARY_WEIGHTS_MLP = {
     "boundary": 0.55,
@@ -102,11 +110,11 @@ BUCKET_DISTANCE_MULTIPLIER = {
 }
 BUCKET_LOCAL_DISTANCE_RULES = {
     "boundary": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"],
         "min_dist": 0.10,
     },
     "notp_high_tmax": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"],
         "min_dist": 0.22,
     }
 }

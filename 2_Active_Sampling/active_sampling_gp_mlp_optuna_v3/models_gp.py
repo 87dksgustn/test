@@ -6,12 +6,13 @@ from sklearn.exceptions import ConvergenceWarning
 
 class GPModels:
     kind = "gp"
-    def __init__(self, clf, reg_tmax, has_tmax_model, gp_params=None, tmax_params=None):
+    def __init__(self, clf, reg_tmax, has_tmax_model, gp_params=None, tmax_params=None, clf_ensemble=None):
         self.clf = clf
         self.reg_tmax = reg_tmax
         self.has_tmax_model = has_tmax_model
         self.gp_params = gp_params or {}
         self.tmax_params = tmax_params or {}
+        self.clf_ensemble = clf_ensemble or []
 
 def build_clf_kernel(params=None):
     params = params or {}
@@ -53,6 +54,47 @@ def fit_gpc_passfail(x_train, y_class, random_state=42, params=None):
         clf.fit(x_train, y_class)
     return clf
 
+def _stratified_bootstrap_indices(y, n_samples, rng):
+    classes, counts = np.unique(y, return_counts=True)
+    if len(classes) <= 1:
+        return rng.integers(0, len(y), size=n_samples)
+    target_counts = []
+    for c in counts:
+        target_counts.append(max(1, int(round(n_samples * (c / len(y))))))
+    diff = int(n_samples - sum(target_counts))
+    if diff != 0:
+        order = np.argsort(-counts)
+        step = 1 if diff > 0 else -1
+        k = 0
+        while diff != 0 and k < 10000:
+            idx = int(order[k % len(order)])
+            if step > 0 or target_counts[idx] > 1:
+                target_counts[idx] += step
+                diff -= step
+            k += 1
+    sampled = []
+    for cls, n_cls in zip(classes, target_counts):
+        cls_idx = np.where(y == cls)[0]
+        sampled.append(rng.choice(cls_idx, size=int(n_cls), replace=True))
+    out = np.concatenate(sampled)
+    rng.shuffle(out)
+    return out
+
+def fit_gpc_ensemble_passfail(x_train, y_class, n_members=5, sample_ratio=0.8, stratified=True, random_state=42, params=None):
+    n_members = max(1, int(n_members))
+    n_total = int(len(y_class))
+    n_boot = max(2, min(n_total, int(round(float(sample_ratio) * n_total))))
+    ensemble = []
+    for i in range(n_members):
+        rng = np.random.default_rng(int(random_state) + i * 9973)
+        if stratified:
+            idx = _stratified_bootstrap_indices(y_class, n_boot, rng)
+        else:
+            idx = rng.integers(0, n_total, size=n_boot)
+        clf_i = fit_gpc_passfail(x_train[idx], y_class[idx], random_state=int(random_state) + i + 1, params=params)
+        ensemble.append(clf_i)
+    return ensemble
+
 def fit_gpr_tmax_given_pass(x_train, y_tmax, y_class, pass_label=0, min_pass_samples=8, random_state=42, params=None):
     params = params or {}
     mask = y_class == pass_label
@@ -70,7 +112,37 @@ def fit_gpr_tmax_given_pass(x_train, y_tmax, y_class, pass_label=0, min_pass_sam
         reg.fit(x_train[mask], y_tmax[mask])
     return reg, True
 
-def fit_gp_models(x_train, y_class, y_tmax, pass_label=0, random_state=42, gp_params=None, tmax_params=None):
+def fit_gp_models(
+    x_train,
+    y_class,
+    y_tmax,
+    pass_label=0,
+    random_state=42,
+    gp_params=None,
+    tmax_params=None,
+    clf_uncertainty_mode="none",
+    clf_ensemble_size=5,
+    clf_ensemble_sample_ratio=0.8,
+    clf_ensemble_stratified=True,
+):
     clf = fit_gpc_passfail(x_train, y_class, random_state=random_state, params=gp_params)
     reg, has = fit_gpr_tmax_given_pass(x_train, y_tmax, y_class, pass_label=pass_label, random_state=random_state, params=tmax_params)
-    return GPModels(clf=clf, reg_tmax=reg, has_tmax_model=has, gp_params=gp_params, tmax_params=tmax_params)
+    clf_ensemble = []
+    if str(clf_uncertainty_mode).strip().lower() == "ensemble_std":
+        clf_ensemble = fit_gpc_ensemble_passfail(
+            x_train,
+            y_class,
+            n_members=clf_ensemble_size,
+            sample_ratio=clf_ensemble_sample_ratio,
+            stratified=bool(clf_ensemble_stratified),
+            random_state=random_state,
+            params=gp_params,
+        )
+    return GPModels(
+        clf=clf,
+        reg_tmax=reg,
+        has_tmax_model=has,
+        gp_params=gp_params,
+        tmax_params=tmax_params,
+        clf_ensemble=clf_ensemble,
+    )

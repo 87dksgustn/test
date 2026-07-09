@@ -1,0 +1,3 @@
+mode,overall_mean_p_tp,ge05,lt04,boundary_mean_p_tp,boundary_A_std,boundary_C_std,unc_sparse_mean_unc,sel_mean_unc,sel_nonzero_unc,bucket_counts
+none,0.503369,22,2,0.503909,2.106473,0.530004,0.0,0.0,0,"{'boundary': 21, 'notp_high_tmax': 4, 'uncertainty_sparse': 2, 'random_check': 1}"
+ensemble_std,0.524143,24,1,0.503909,2.106473,0.530004,0.157628,0.0916,28,"{'boundary': 21, 'notp_high_tmax': 4, 'uncertainty_sparse': 2, 'random_check': 1}"

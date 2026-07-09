@@ -26,7 +26,19 @@ def select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_pa
     tmax_params = tuned_params.get("tmax_params")
     mlp_params = tuned_params.get("mlp_params")
     gp_cv = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=gp_params, random_state=config.RANDOM_SEED)
-    gp_models = fit_gp_models(x_train, y_class, y_tmax, pass_label=config.PASS_LABEL, random_state=config.RANDOM_SEED, gp_params=gp_params, tmax_params=tmax_params)
+    gp_models = fit_gp_models(
+        x_train,
+        y_class,
+        y_tmax,
+        pass_label=config.PASS_LABEL,
+        random_state=config.RANDOM_SEED,
+        gp_params=gp_params,
+        tmax_params=tmax_params,
+        clf_uncertainty_mode=getattr(config, "GP_CLF_UNCERTAINTY_MODE", "none"),
+        clf_ensemble_size=getattr(config, "GP_CLF_ENSEMBLE_SIZE", 5),
+        clf_ensemble_sample_ratio=getattr(config, "GP_CLF_ENSEMBLE_SAMPLE_RATIO", 0.8),
+        clf_ensemble_stratified=getattr(config, "GP_CLF_ENSEMBLE_STRATIFIED", True),
+    )
     gp_score = gp_cv["summary"].get("stable_score", weighted_score(gp_cv["summary"], config.MODEL_SELECTION_WEIGHTS))
     report = {"model_mode": mode, "selected_model": "gp", "reason": "", "gp_cv_result": gp_cv["summary"], "gp_score": gp_score, "mlp_eligibility": mlp_eligibility_report(df, config), "mlp_cv_result": None, "mlp_score": None, "tuned_gp_params": gp_params, "tuned_mlp_params": mlp_params, "tuned_tmax_params": tmax_params}
     fold_results = {"gp": gp_cv}
