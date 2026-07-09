@@ -45,11 +45,6 @@ def create_try_dir(output_dir):
     return try_dir
 
 
-def parse_try_index(try_dir):
-    m = re.match(r"^Try_(\d+)$", Path(try_dir).name)
-    return int(m.group(1)) if m else 1
-
-
 def normalized_range_stats(df, cfg):
     vals = []
     for col in cfg.CONTINUOUS_COLS:
@@ -66,30 +61,35 @@ def normalized_range_stats(df, cfg):
     }
 
 
-def make_effective_boundary_weights(cfg, try_dir, model_kind, labeled_df):
+def make_effective_boundary_weights(cfg, model_kind, labeled_df):
     use_adaptive = bool(getattr(cfg, "ENABLE_ADAPTIVE_BOUNDARY_HYBRID", False))
     base = dict(cfg.BOUNDARY_WEIGHTS_MLP if str(model_kind).lower() == "mlp" else cfg.BOUNDARY_WEIGHTS_GP)
     if not use_adaptive:
         return base
 
-    try_idx = parse_try_index(try_dir)
-    start_try = int(getattr(cfg, "ADAPTIVE_BOUNDARY_TRY_START", 1))
-    full_try = int(getattr(cfg, "ADAPTIVE_BOUNDARY_TRY_FULL", 8))
     max_unc = float(getattr(cfg, "ADAPTIVE_BOUNDARY_CLF_UNC_MAX", 0.10))
-    guard_min = float(getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MIN_NORM_RANGE", 0.90))
-    guard_mean = float(getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MEAN_NORM_RANGE", 0.93))
-    guard_scale = float(getattr(cfg, "ADAPTIVE_BOUNDARY_GUARD_UNC_SCALE", 0.30))
-
-    if full_try <= start_try:
-        progress = 1.0
-    else:
-        progress = (try_idx - start_try) / float(full_try - start_try)
-    progress = max(0.0, min(1.0, progress))
+    min_unc = float(getattr(cfg, "ADAPTIVE_BOUNDARY_CLF_UNC_MIN", 0.00))
+    full_min = float(
+        getattr(
+            cfg,
+            "ADAPTIVE_BOUNDARY_COVERAGE_FULL_MIN_NORM_RANGE",
+            getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MIN_NORM_RANGE", 0.90),
+        )
+    )
+    full_mean = float(
+        getattr(
+            cfg,
+            "ADAPTIVE_BOUNDARY_COVERAGE_FULL_MEAN_NORM_RANGE",
+            getattr(cfg, "ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MEAN_NORM_RANGE", 0.93),
+        )
+    )
+    unc_span = max(0.0, max_unc - min_unc)
 
     cov = normalized_range_stats(labeled_df, cfg)
-    target_unc = max_unc * progress
-    if cov["min_norm_range"] < guard_min or cov["mean_norm_range"] < guard_mean:
-        target_unc *= guard_scale
+    min_readiness = 1.0 if full_min <= 0 else cov["min_norm_range"] / full_min
+    mean_readiness = 1.0 if full_mean <= 0 else cov["mean_norm_range"] / full_mean
+    readiness = max(0.0, min(1.0, min(min_readiness, mean_readiness)))
+    target_unc = min_unc + unc_span * readiness
 
     keys_non_unc = ["boundary", "local_sparsity", "combo_priority"]
     base_non_unc_sum = sum(float(base.get(k, 0.0)) for k in keys_non_unc)
@@ -106,10 +106,9 @@ def make_effective_boundary_weights(cfg, try_dir, model_kind, labeled_df):
         eff["clf_uncertainty"] = target_unc
 
     logging.info(
-        "Adaptive boundary weights | try=%s model=%s progress=%.3f cov_min=%.3f cov_mean=%.3f -> %s",
-        try_idx,
+        "Adaptive boundary weights | model=%s readiness=%.3f cov_min=%.3f cov_mean=%.3f -> %s",
         model_kind,
-        progress,
+        readiness,
         cov["min_norm_range"],
         cov["mean_norm_range"],
         {k: round(v, 4) for k, v in eff.items()},
@@ -519,10 +518,10 @@ def main():
     pool = generate_candidate_pool(valid_combos, config.CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
     print(f"[INFO] Candidate pool size after exclusion filter: {len(pool)}")
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
-    effective_boundary_weights = make_effective_boundary_weights(config, try_dir, getattr(selected_model, "kind", "gp"), df)
+    effective_boundary_weights = make_effective_boundary_weights(config, getattr(selected_model, "kind", "gp"), df)
     scoring_cfg = build_scoring_config(config, getattr(selected_model, "kind", "gp"), effective_boundary_weights)
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
-    scored.sort_values("acq_boundary", ascending=False).head(2000).to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
+    scored.nlargest(2000, "acq_boundary").to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
     bucket_target_counts = bucket_counts(config.BATCH_SIZE, config.BUCKET_RATIO)
     bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
 

@@ -136,6 +136,7 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
 
     n_trials = n_trials or config.TMAX_OPTUNA_N_TRIALS
     n_splits = max(2, min(config.CV_SPLITS, len(y_pass)))
+    cv_splits = list(KFold(n_splits=n_splits, shuffle=True, random_state=config.RANDOM_SEED).split(x_pass))
 
     def objective(trial):
         params = {
@@ -148,9 +149,8 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
             "n_restarts_optimizer": 1,
         }
 
-        kf = KFold(n_splits=n_splits, shuffle=True, random_state=config.RANDOM_SEED)
         rmses = []
-        for tr, va in kf.split(x_pass):
+        for tr, va in cv_splits:
             xtr = x_pass[tr]
             ytr = y_pass[tr]
             xva = x_pass[va]

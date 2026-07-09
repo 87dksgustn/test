@@ -23,11 +23,11 @@ def far_enough(x, selected_idx, x_pool, min_dist):
     if not selected_idx: return True
     return bool(np.min(np.linalg.norm(x_pool[selected_idx] - x, axis=1)) >= min_dist)
 
-def far_enough_local(pool, idx, selected_idx, cols, min_dist):
+def far_enough_local(local_pool, idx, selected_idx, min_dist):
     if not selected_idx:
         return True
-    x = pool.loc[idx, cols].to_numpy(dtype=float)
-    y = pool.loc[selected_idx, cols].to_numpy(dtype=float)
+    x = local_pool[idx]
+    y = local_pool[selected_idx]
     return bool(np.min(np.linalg.norm(y - x, axis=1)) >= min_dist)
 
 def bin_label_for_value(v, bins, labels):
@@ -49,6 +49,9 @@ def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, 
     if isinstance(local_rule, dict):
         local_cols = local_rule.get("cols")
         local_min_dist = local_rule.get("min_dist")
+    local_pool = None
+    if local_cols and local_min_dist is not None:
+        local_pool = pool.loc[:, local_cols].to_numpy(dtype=float)
     if isinstance(bin_quota_rule, dict):
         quota_col = bin_quota_rule.get("col")
         quota_bins = list(bin_quota_rule.get("bins", []))
@@ -60,10 +63,17 @@ def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, 
     if isinstance(ptp_bound, dict):
         ptp_min = ptp_bound.get("min")
         ptp_max = ptp_bound.get("max")
+
+    # Keep incremental combo counts to avoid repeated value_counts in the hot loop.
+    current_counts = labeled_df["discrete_combo_id"].value_counts().to_dict()
+    if selected:
+        for k, v in pool.loc[selected, "discrete_combo_id"].value_counts().to_dict().items():
+            current_counts[k] = current_counts.get(k, 0) + int(v)
+
     for idx in order:
         if idx in selected or idx in chosen: continue
-        current = combo_counts_after(labeled_df, pool.loc[selected+chosen] if selected or chosen else pool.iloc[0:0])
-        if current.get(pool.at[idx, "discrete_combo_id"], 0) >= max_per_combo: continue
+        cid = pool.at[idx, "discrete_combo_id"]
+        if current_counts.get(cid, 0) >= max_per_combo: continue
         if "p_tp" in pool.columns:
             p = float(pool.at[idx, "p_tp"])
             if ptp_min is not None and p < float(ptp_min):
@@ -78,11 +88,12 @@ def greedy(pool, x_pool, labeled_df, selected, n, col, max_per_combo, min_dist, 
             if quota_counts.get(quota_label, 0) >= int(quota_by_label.get(quota_label, 0)):
                 continue
         if not far_enough(x_pool[idx], selected+chosen, x_pool, min_dist): continue
-        if local_cols and local_min_dist is not None and not far_enough_local(pool, idx, selected+chosen, local_cols, float(local_min_dist)):
+        if local_pool is not None and not far_enough_local(local_pool, idx, selected+chosen, float(local_min_dist)):
             continue
         chosen.append(idx)
         if quota_label is not None:
             quota_counts[quota_label] = quota_counts.get(quota_label, 0) + 1
+        current_counts[cid] = current_counts.get(cid, 0) + 1
         if len(chosen) >= n: break
     return chosen
 

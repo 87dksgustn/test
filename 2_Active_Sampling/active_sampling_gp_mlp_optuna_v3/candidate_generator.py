@@ -19,12 +19,26 @@ def generate_lhs_continuous_candidates(n, continuous_cols, continuous_bounds, se
     return pd.DataFrame(qmc.scale(x_unit, lows, highs), columns=continuous_cols)
 
 def generate_candidate_pool(valid_combos, continuous_cols, continuous_bounds, discrete_cols, candidates_per_combo, excluded_reference_ranges, seed=42):
-    parts = []
-    for i, row in valid_combos.reset_index(drop=True).iterrows():
-        cont = generate_lhs_continuous_candidates(candidates_per_combo, continuous_cols, continuous_bounds, seed + i * 1009)
-        for col in discrete_cols:
-            cont[col] = row[col]
-        cont["discrete_combo_id"] = row["discrete_combo_id"]
-        parts.append(cont)
-    pool = pd.concat(parts, ignore_index=True)
+    combos = valid_combos.reset_index(drop=True)
+    n_combo = len(combos)
+    n_total = n_combo * int(candidates_per_combo)
+
+    cont_all = np.empty((n_total, len(continuous_cols)), dtype=float)
+    for i in range(n_combo):
+        start = i * int(candidates_per_combo)
+        end = start + int(candidates_per_combo)
+        cont = generate_lhs_continuous_candidates(
+            candidates_per_combo,
+            continuous_cols,
+            continuous_bounds,
+            seed + i * 1009,
+        )
+        cont_all[start:end, :] = cont.to_numpy(dtype=float)
+
+    out = {col: cont_all[:, j] for j, col in enumerate(continuous_cols)}
+    for col in discrete_cols:
+        out[col] = np.repeat(combos[col].to_numpy(), int(candidates_per_combo))
+    out["discrete_combo_id"] = np.repeat(combos["discrete_combo_id"].to_numpy(), int(candidates_per_combo))
+
+    pool = pd.DataFrame(out)
     return filter_excluded_reference_ranges(pool, excluded_reference_ranges)

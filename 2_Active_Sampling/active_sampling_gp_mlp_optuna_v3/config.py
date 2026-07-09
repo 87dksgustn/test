@@ -79,15 +79,13 @@ GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
 # Adaptive hybrid weighting for boundary bucket.
-# Early iterations prioritize boundary coverage, then gradually increase
-# classifier uncertainty emphasis with coverage-guard triggers.
+# Data-driven mode: boundary classifier uncertainty weight is determined
+# only by current coverage readiness (no Try-index schedule).
 ENABLE_ADAPTIVE_BOUNDARY_HYBRID = True
-ADAPTIVE_BOUNDARY_TRY_START = 1
-ADAPTIVE_BOUNDARY_TRY_FULL = 8
+ADAPTIVE_BOUNDARY_CLF_UNC_MIN = 0.00
 ADAPTIVE_BOUNDARY_CLF_UNC_MAX = 0.15
-ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MIN_NORM_RANGE = 0.90
-ADAPTIVE_BOUNDARY_COVERAGE_GUARD_MEAN_NORM_RANGE = 0.93
-ADAPTIVE_BOUNDARY_GUARD_UNC_SCALE = 0.30
+ADAPTIVE_BOUNDARY_COVERAGE_FULL_MIN_NORM_RANGE = 0.90
+ADAPTIVE_BOUNDARY_COVERAGE_FULL_MEAN_NORM_RANGE = 0.93
 
 BOUNDARY_WEIGHTS_MLP = {
     "boundary": 0.55,
