@@ -1,0 +1,22 @@
+{
+  "dataset": "Final_test_Dataset.csv",
+  "n_samples": 99,
+  "positive_label_for_metrics": 1,
+  "metrics": {
+    "accuracy": 0.898989898989899,
+    "tp_precision": 0.8048780487804879,
+    "tp_recall": 0.9428571428571428,
+    "tp_f1": 0.868421052631579,
+    "roc_auc": 0.9790178571428572
+  },
+  "confusion_matrix_labels_NoTP0_TP1": [
+    [
+      56,
+      8
+    ],
+    [
+      2,
+      33
+    ]
+  ]
+}
