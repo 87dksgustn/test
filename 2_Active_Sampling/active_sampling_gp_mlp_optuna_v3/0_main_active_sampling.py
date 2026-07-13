@@ -538,6 +538,9 @@ def main():
         getattr(config, "BUCKET_LOCAL_DISTANCE_RULES", {}),
         bucket_bin_quota_rules,
         getattr(config, "BUCKET_PTP_BOUNDS", {}),
+        enable_sparse_coverage=getattr(config, "ENABLE_SPARSE_COVERAGE", True),
+        sparse_min_samples=getattr(config, "SPARSE_MIN_SAMPLES", 3),
+        barrier_thx_full_range=getattr(config, "BARRIER_THX_FULL_RANGE", None),
     )
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
     score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]

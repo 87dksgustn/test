@@ -262,6 +262,20 @@ MLP_USE_CLASS_WEIGHT = True
 
 RANDOM_SEED = 42
 
+# ============================================================
+# Adaptive sparse zone coverage
+# ============================================================
+# Enable dynamic detection of low-density regions (sparse zones) in barrier_thx.
+# After batch selection, ensure sparse zones have minimum sample coverage.
+# This prevents model performance degradation in under-sampled regions.
+ENABLE_SPARSE_COVERAGE = True
+SPARSE_MIN_SAMPLES = 3  # Minimum samples per sparse zone
+
+# Physical range of barrier_thx to ensure coverage across entire domain
+# If None, uses actual data range (may miss edge regions)
+# Set to match CONTINUOUS_BOUNDS for barrier_thx
+BARRIER_THX_FULL_RANGE = (0.25, 2.5)
+
 OUTPUT_DIR = Path("outputs")
 OUTPUT_CANDIDATES_CSV = OUTPUT_DIR / "next_sampling_candidates.csv"
 OUTPUT_SCORED_POOL_CSV = OUTPUT_DIR / "scored_candidate_pool_preview.csv"
