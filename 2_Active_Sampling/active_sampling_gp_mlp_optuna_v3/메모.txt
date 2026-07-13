@@ -1,0 +1,1 @@
+- Holdout(test dataset) 데이터 만들어놓고 확인할 것 : 각 변수, 특히 bairrer_thx 구간 별 에측 정확도 확인

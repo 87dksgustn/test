@@ -22,7 +22,7 @@
     "reason": "MLP Optuna eligibility conditions not met."
   },
   "tmax": {
-    "best_value_rmse": 9.364767968812718,
+    "best_value_rmse": 9.364767971113938,
     "n_trials": 25,
     "best_params": {
       "kernel": "Matern32",
