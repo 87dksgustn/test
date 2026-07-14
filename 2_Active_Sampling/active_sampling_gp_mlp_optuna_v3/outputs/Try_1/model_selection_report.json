@@ -1,0 +1,63 @@
+{
+  "model_mode": "auto",
+  "selected_model": "gp",
+  "reason": "MLP is not eligible. Falling back to GP.",
+  "gp_cv_result": {
+    "fold_count": 5,
+    "accuracy_mean": 0.9785714285714286,
+    "accuracy_std": 0.04285714285714284,
+    "accuracy": 0.9785714285714286,
+    "tp_precision_mean": 0.975,
+    "tp_precision_std": 0.049999999999999996,
+    "tp_precision": 0.975,
+    "tp_recall_mean": 0.9866666666666667,
+    "tp_recall_std": 0.02666666666666666,
+    "tp_recall": 0.9866666666666667,
+    "tp_f1_mean": 0.9806451612903226,
+    "tp_f1_std": 0.03870967741935485,
+    "tp_f1": 0.9806451612903226,
+    "tmax_mae_mean": 1.7624283527218292,
+    "tmax_mae_std": 0.17744907523106354,
+    "tmax_mae": 1.7624283527218292,
+    "tmax_rmse_mean": 2.1971881829306557,
+    "tmax_rmse_std": 0.24725355423095524,
+    "tmax_rmse": 2.1971881829306557,
+    "tmax_r2_mean": 0.9961976255298339,
+    "tmax_r2_std": 0.0017604602366536914,
+    "tmax_r2": 0.9961976255298339,
+    "weighted_mean_score": 0.9848602150537634,
+    "weighted_std_score": 0.030279569892473115,
+    "stable_score": 0.9697204301075268,
+    "cv_splits": 5
+  },
+  "gp_score": 0.9697204301075268,
+  "mlp_eligibility": {
+    "n_total": 140,
+    "n_notp": 67,
+    "n_tp": 73,
+    "min_combo_count": 10,
+    "torch_available": true,
+    "notp_total": false,
+    "notp_count": false,
+    "tp_count": false,
+    "combo_floor": true,
+    "torch_ready": true,
+    "eligible": false
+  },
+  "mlp_cv_result": null,
+  "mlp_score": null,
+  "tuned_gp_params": {
+    "kernel": "Matern32",
+    "constant": 1.5751320499779735,
+    "length_scale": 0.8066708658064159
+  },
+  "tuned_mlp_params": null,
+  "tuned_tmax_params": {
+    "kernel": "Matern32",
+    "constant": 2.934468834676318,
+    "length_scale": 0.6916370856988064,
+    "noise_level": 4.7269920584759407e-07,
+    "alpha": 3.265141291769448e-10,
+    "normalize_y": true
+  }
+}
