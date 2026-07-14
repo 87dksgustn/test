@@ -1,0 +1,112 @@
+{
+  "input_csv": "initial_dataset.csv",
+  "model_kind": "gp",
+  "objective": {
+    "constraint": "p_tp <= 0.5",
+    "maximize": [
+      "p_tp",
+      "tmax_pred_given_notp"
+    ],
+    "minimize": [
+      "C_Barrier_Thx"
+    ]
+  },
+  "optimizer": "NSGA-II",
+  "run_dir": "outputs\\z_surrogate_optimize_gp\\Opt_1",
+  "n_training_rows": 140,
+  "n_valid_combos": 14,
+  "trials_per_combo": 80,
+  "top_k_per_celld_bin": 10,
+  "n_total_evaluations": 1120,
+  "n_total_feasible_evaluations": 749,
+  "n_pareto_points": 26,
+  "gp_params": {
+    "kernel": "Matern32",
+    "constant": 1.5751320499779735,
+    "length_scale": 0.8066708658064159
+  },
+  "tmax_params": {
+    "kernel": "Matern32",
+    "constant": 2.934468834676318,
+    "length_scale": 0.6916370856988064,
+    "noise_level": 4.7269920584759407e-07,
+    "alpha": 3.265141291769448e-10,
+    "normalize_y": true
+  },
+  "trust_weights": {
+    "feasibility_margin": 0.35,
+    "tmax_uncertainty": 0.3,
+    "clf_uncertainty": 0.2,
+    "data_support": 0.15
+  },
+  "cell_d_trial_quota": {
+    "col": "A_Cell_D",
+    "bins": [
+      8.0,
+      10.0,
+      12.0,
+      14.0,
+      16.000001
+    ],
+    "labels": [
+      "8-10",
+      "10-12",
+      "12-14",
+      "14-16"
+    ],
+    "ratio_by_label": {
+      "8-10": 0.2465753424657534,
+      "10-12": 0.273972602739726,
+      "12-14": 0.2191780821917808,
+      "14-16": 0.2602739726027397
+    },
+    "trial_quota_by_label": {
+      "8-10": 20,
+      "10-12": 22,
+      "12-14": 17,
+      "14-16": 21
+    }
+  },
+  "training_nn_count": 140,
+  "runtime_sec": 49.303,
+  "output_files": {
+    "pareto_all_bins": "outputs\\z_surrogate_optimize_gp\\Opt_1\\pareto_all_bins.csv",
+    "pareto_top_by_bin": "outputs\\z_surrogate_optimize_gp\\Opt_1\\pareto_top_by_bin.csv",
+    "lexicographic_top_by_bin": "outputs\\z_surrogate_optimize_gp\\Opt_1\\lexicographic_top_by_bin.csv",
+    "pareto_front_figure": "outputs\\z_surrogate_optimize_gp\\Opt_1\\pareto_front_4x2.png",
+    "summary": "outputs\\z_surrogate_optimize_gp\\Opt_1\\summary.json"
+  },
+  "recommended_solution": {
+    "lexicographic_rank": 1,
+    "discrete_combo_id": "combo_003",
+    "A_Cell_D": 8.18707804793429,
+    "C_Barrier_Thx": 1.1274816830309622,
+    "E_Barrier_Outer_Thx": 2.1751420028236437,
+    "F_ThermalResin_Thx": 1.8523961174467476,
+    "B_Barrier_Type": "Si2",
+    "D_Barrier_Outer_Type": "PU",
+    "p_tp": 0.49866851086158714,
+    "p_notp": 0.5013314891384129,
+    "tmax_pred_given_notp": 318.5688561600486,
+    "tmax_std_given_notp": 2.3183300268421405,
+    "clf_uncertainty_raw": 0.09520507532267898,
+    "nn_distance_raw": 1.498358690910792,
+    "feasibility_margin": 0.0013314891384128558,
+    "robust_tmax_lower_95": 314.024929307438,
+    "is_feasible": true,
+    "objective_score": 318.5688561600486,
+    "constraint_violation": 0.0,
+    "cell_d_bin_label": "8-10",
+    "cell_d_bin_weight": 0.2465753424657534,
+    "cell_d_bin_trial_quota": 20,
+    "optimization_method": "nsga2",
+    "trust_feasibility_score": 0.0,
+    "trust_tmax_unc_score": 0.41422735308719616,
+    "trust_clf_unc_score": 0.4083770731159083,
+    "trust_support_score": 0.25126068906271837,
+    "trust_score": 0.24363272390874827,
+    "trust_level": "low",
+    "boundary_gap": 0.0013314891384128558,
+    "boundary_near_score": 1.0
+  }
+}
