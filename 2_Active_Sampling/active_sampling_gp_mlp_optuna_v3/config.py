@@ -47,7 +47,7 @@ DISCRETE_LEVELS = {
 S_PREFIX = "S"
 
 CURRENT_LEVEL_TARGET_TOTAL = 636
-INITIAL_TOTAL = 168
+INITIAL_TOTAL = 140
 ADDITIONAL_TOTAL = CURRENT_LEVEL_TARGET_TOTAL - INITIAL_TOTAL
 
 BATCH_SIZE = 23
@@ -189,6 +189,12 @@ MODEL_SELECTION_WEIGHTS = {
     "tp_f1": 0.30,
 }
 MLP_SELECTION_MARGIN = 0.01
+
+# Model comparison summary score (for GP vs MLP report/plot only).
+# composite_score = MODEL_COMPARE_CV_WEIGHT * cv_stable_score + MODEL_COMPARE_HOLDOUT_WEIGHT * holdout_weighted_score
+MODEL_COMPARE_CV_WEIGHT = 0.30
+MODEL_COMPARE_HOLDOUT_WEIGHT = 0.70
+MODEL_COMPARE_HOLDOUT_TEST_SIZE = 0.20
 
 # ============================================================
 # CV stabilization

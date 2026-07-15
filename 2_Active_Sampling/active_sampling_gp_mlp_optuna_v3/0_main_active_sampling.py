@@ -366,6 +366,114 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
     fig.savefig(output_png, dpi=180)
     plt.close(fig)
 
+
+def save_model_compare_cv_barplot(selection_report, output_png):
+    gp = selection_report.get("gp_cv_result") or {}
+    mlp = selection_report.get("mlp_cv_result") or {}
+    if not gp or not mlp:
+        return False
+
+    gp_holdout = selection_report.get("gp_holdout_result") or {}
+    mlp_holdout = selection_report.get("mlp_holdout_result") or {}
+    has_holdout = ("error" not in gp_holdout) and ("error" not in mlp_holdout) and gp_holdout and mlp_holdout
+
+    metrics = [
+        ("tp_recall", "TP recall", True),
+        ("tp_f1", "TP F1", True),
+        ("stable_score", "Stable score", True),
+        ("tmax_rmse", "Tmax RMSE", False),
+        ("tmax_r2", "Tmax R2", True),
+    ]
+
+    labels = []
+    gp_vals = []
+    gp_err = []
+    mlp_vals = []
+    mlp_err = []
+    keep_higher = []
+
+    for key, label, higher_is_better in metrics:
+        g = gp.get(f"{key}_mean", gp.get(key, np.nan))
+        m = mlp.get(f"{key}_mean", mlp.get(key, np.nan))
+        if not np.isfinite(g) and not np.isfinite(m):
+            continue
+        labels.append(label)
+        gp_vals.append(float(g) if np.isfinite(g) else np.nan)
+        mlp_vals.append(float(m) if np.isfinite(m) else np.nan)
+        gstd = gp.get(f"{key}_std", np.nan)
+        mstd = mlp.get(f"{key}_std", np.nan)
+        gp_err.append(float(gstd) if np.isfinite(gstd) else 0.0)
+        mlp_err.append(float(mstd) if np.isfinite(mstd) else 0.0)
+        keep_higher.append(bool(higher_is_better))
+
+    if not labels:
+        return False
+
+    x = np.arange(len(labels))
+    w = 0.36
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5.5), dpi=170)
+    ax = axes[0]
+    bars_gp = ax.bar(x - w / 2, gp_vals, width=w, yerr=gp_err, capsize=3, label="GP", color="#4C78A8")
+    bars_mlp = ax.bar(x + w / 2, mlp_vals, width=w, yerr=mlp_err, capsize=3, label="MLP", color="#F58518")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=0)
+    ax.set_ylabel("CV score")
+    ax.set_title("CV Metrics")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(frameon=True)
+
+    for i, (g, m, higher_is_better) in enumerate(zip(gp_vals, mlp_vals, keep_higher)):
+        if not (np.isfinite(g) and np.isfinite(m)):
+            continue
+        if higher_is_better:
+            winner = "GP" if g >= m else "MLP"
+            y = max(g, m)
+        else:
+            winner = "GP" if g <= m else "MLP"
+            y = max(g, m)
+        ax.text(i, y, winner, ha="center", va="bottom", fontsize=8, color="#374151")
+
+    for bars in [bars_gp, bars_mlp]:
+        for b in bars:
+            v = b.get_height()
+            if np.isfinite(v):
+                ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7)
+
+    ax2 = axes[1]
+    if has_holdout:
+        summary_labels = ["CV stable", "Holdout weighted", "Composite"]
+        cv_gp = float(gp.get("stable_score", np.nan))
+        cv_mlp = float(mlp.get("stable_score", np.nan))
+        ho_gp = float(gp_holdout.get("weighted_score", np.nan))
+        ho_mlp = float(mlp_holdout.get("weighted_score", np.nan))
+        comp_gp = float(selection_report.get("gp_composite_score", np.nan))
+        comp_mlp = float(selection_report.get("mlp_composite_score", np.nan))
+        xx = np.arange(len(summary_labels))
+        bars2_gp = ax2.bar(xx - w / 2, [cv_gp, ho_gp, comp_gp], width=w, label="GP", color="#4C78A8")
+        bars2_mlp = ax2.bar(xx + w / 2, [cv_mlp, ho_mlp, comp_mlp], width=w, label="MLP", color="#F58518")
+        ax2.set_xticks(xx)
+        ax2.set_xticklabels(summary_labels)
+        cw = selection_report.get("composite_weights", {})
+        ax2.set_title(f"Summary Scores (composite: CV {cw.get('cv', 0):.2f}, Holdout {cw.get('holdout', 0):.2f})")
+        ax2.set_ylabel("Score")
+        ax2.grid(True, axis="y", alpha=0.25)
+        ax2.legend(frameon=True)
+        for bars in [bars2_gp, bars2_mlp]:
+            for b in bars:
+                v = b.get_height()
+                if np.isfinite(v):
+                    ax2.text(b.get_x() + b.get_width() / 2, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7)
+    else:
+        ax2.axis("off")
+        ax2.text(0.5, 0.5, "Holdout comparison unavailable", ha="center", va="center", fontsize=12, color="#6b7280")
+
+    fig.suptitle("GP vs MLP Comparison", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+    return True
+
 def _count_from_ratio(total, labels, ratio_by_label):
     raw = {k: total * float(ratio_by_label.get(k, 0.0)) for k in labels}
     counts = {k: int(math.floor(v)) for k, v in raw.items()}
@@ -488,6 +596,7 @@ def main():
     output_model_selection_json = try_dir / "model_selection_report.json"
     output_optuna_report_json = try_dir / "optuna_report.json"
     output_cv_fold_metrics_csv = try_dir / "cv_fold_metrics.csv"
+    output_model_compare_cv_png = try_dir / "gp_vs_mlp_cv_metrics.png"
     output_pairs_dashboard_png = try_dir / "sampling_all_continuous_pairs_6panel.png"
     output_dashboard_png = try_dir / "sampling_selection_dashboard_1page.png"
 
@@ -514,6 +623,9 @@ def main():
     fold_df = fold_metrics_to_df(fold_results)
     if len(fold_df):
         fold_df.to_csv(output_cv_fold_metrics_csv, index=False, encoding="utf-8-sig")
+    wrote_model_compare_png = save_model_compare_cv_barplot(selection_report, output_model_compare_cv_png)
+    if wrote_model_compare_png:
+        print(f"[INFO] Saved GP vs MLP CV comparison chart: {output_model_compare_cv_png}")
     print("[INFO] Model selection report:"); print(json.dumps(selection_report, indent=2, ensure_ascii=False))
     print(f"[INFO] Selected model kind: {getattr(selected_model, 'kind', 'gp')}")
     pool = generate_candidate_pool(valid_combos, config.CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
@@ -562,6 +674,8 @@ def main():
         output_pairs_dashboard_png.name,
         output_dashboard_png.name,
     ]
+    if wrote_model_compare_png:
+        written.append(output_model_compare_cv_png.name)
     (try_dir / "manifest.txt").write_text("\n".join(written), encoding="utf-8")
     print(f"[INFO] Saved all artifacts in: {try_dir}")
     print(f"[INFO] Artifact manifest: {try_dir / 'manifest.txt'}")
