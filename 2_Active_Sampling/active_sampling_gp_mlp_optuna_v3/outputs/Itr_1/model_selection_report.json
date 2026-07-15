@@ -46,6 +46,14 @@
   },
   "mlp_cv_result": null,
   "mlp_score": null,
+  "gp_holdout_result": null,
+  "mlp_holdout_result": null,
+  "composite_weights": {
+    "cv": 0.3,
+    "holdout": 0.7
+  },
+  "gp_composite_score": null,
+  "mlp_composite_score": null,
   "tuned_gp_params": {
     "kernel": "Matern32",
     "constant": 1.5751320499779735,

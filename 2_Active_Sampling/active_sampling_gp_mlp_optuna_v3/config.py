@@ -5,6 +5,7 @@ from pathlib import Path
 # ============================================================
 
 INPUT_CSV = "Itr_1_dataset.csv"
+FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
 CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
 DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
@@ -195,6 +196,13 @@ MLP_SELECTION_MARGIN = 0.01
 MODEL_COMPARE_CV_WEIGHT = 0.30
 MODEL_COMPARE_HOLDOUT_WEIGHT = 0.70
 MODEL_COMPARE_HOLDOUT_TEST_SIZE = 0.20
+
+# Batch size auto-recommendation settings
+BATCH_SIZE_DECISION_WINDOW = 3  # Number of recent iterations to consider
+BATCH_SIZE_MIN = 16
+BATCH_SIZE_MAX = 40
+BATCH_SIZE_STEP_UP = 5
+BATCH_SIZE_STEP_DOWN = 5
 
 # ============================================================
 # CV stabilization

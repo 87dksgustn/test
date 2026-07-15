@@ -474,6 +474,295 @@ def save_model_compare_cv_barplot(selection_report, output_png):
     plt.close(fig)
     return True
 
+def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg):
+    from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+    cm = confusion_matrix(y_true, y_pred, labels=[cfg.NOTP_LABEL, cfg.TP_LABEL])
+    acc = accuracy_score(y_true, y_pred)
+    prec = precision_score(y_true, y_pred, pos_label=cfg.TP_LABEL, zero_division=0)
+    rec = recall_score(y_true, y_pred, pos_label=cfg.TP_LABEL, zero_division=0)
+    f1 = f1_score(y_true, y_pred, pos_label=cfg.TP_LABEL, zero_division=0)
+
+    fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
+    im = ax.imshow(cm, cmap="Blues")
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(["NoTP (pred)", "TP (pred)"], fontsize=12)
+    ax.set_yticklabels(["NoTP (actual)", "TP (actual)"], fontsize=12)
+    ax.set_xlabel("Predicted", fontsize=13)
+    ax.set_ylabel("Actual", fontsize=13)
+
+    for i in range(2):
+        for j in range(2):
+            color = "white" if cm[i, j] > cm.max() / 2 else "black"
+            ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=18, fontweight="bold", color=color)
+
+    ax.set_title("TP/NoTP Confusion Matrix (Holdout)", fontsize=15, fontweight="bold", pad=12)
+    metrics_text = f"Acc: {acc:.3f}   Precision: {prec:.3f}   Recall: {rec:.3f}   F1: {f1:.3f}"
+    fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+    return {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+
+
+def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_pred)
+    yt = y_true[mask]
+    yp = y_pred[mask]
+    if len(yt) == 0:
+        return None
+
+    mae = mean_absolute_error(yt, yp)
+    rmse = np.sqrt(mean_squared_error(yt, yp))
+    r2 = r2_score(yt, yp) if len(yt) > 1 else np.nan
+
+    fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
+    ax.scatter(yt, yp, s=50, alpha=0.7, edgecolors="black", linewidths=0.4, c="#4C78A8")
+    lims = [min(yt.min(), yp.min()) - 5, max(yt.max(), yp.max()) + 5]
+    ax.plot(lims, lims, "--", color="#E45756", linewidth=1.5, label="Ideal (y=x)")
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+    ax.set_xlabel("Actual Tmax", fontsize=13)
+    ax.set_ylabel("Predicted Tmax", fontsize=13)
+    ax.set_title("Tmax Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold")
+    metrics_text = f"MAE: {mae:.2f}   RMSE: {rmse:.2f}   R²: {r2:.3f}   N: {len(yt)}"
+    fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
+    ax.legend(loc="upper left", frameon=True)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+    return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
+
+
+def collect_iteration_history(output_dir):
+    """Scan Itr_n folders and collect iteration_summary.json from each.
+    Falls back to model_selection_report.json for older iterations without summary.
+    """
+    itr_pattern = re.compile(r"^Itr_(\d+)$")
+    rows = []
+    for p in Path(output_dir).iterdir():
+        if not p.is_dir():
+            continue
+        m = itr_pattern.match(p.name)
+        if not m:
+            continue
+        itr_num = int(m.group(1))
+
+        # Try iteration_summary.json first (new format)
+        summary_path = p / "iteration_summary.json"
+        if summary_path.exists():
+            try:
+                with open(summary_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                data["itr_num"] = itr_num
+                data["itr_folder"] = p.name
+                rows.append(data)
+                continue
+            except Exception:
+                pass
+
+        # Fallback: try model_selection_report.json for older iterations
+        report_path = p / "model_selection_report.json"
+        if report_path.exists():
+            try:
+                with open(report_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                data = {
+                    "itr_num": itr_num,
+                    "itr_folder": p.name,
+                    "selected_model": report.get("selected_model", "gp"),
+                    "gp_score": report.get("gp_score"),
+                    "mlp_score": report.get("mlp_score"),
+                    "gp_composite_score": report.get("gp_composite_score"),
+                    "mlp_composite_score": report.get("mlp_composite_score"),
+                }
+                rows.append(data)
+            except Exception:
+                continue
+
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).sort_values("itr_num").reset_index(drop=True)
+    return df
+
+
+def save_iteration_performance_trend_plot(history_df, output_png):
+    """Plot performance metrics trend across iterations."""
+    if len(history_df) < 1:
+        return False
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=150)
+    x = history_df["itr_num"].to_numpy()
+
+    def _has_valid_data(df, col):
+        return col in df.columns and df[col].notna().any()
+
+    # Panel 1: TP Recall & F1
+    ax1 = axes[0, 0]
+    has_p1_data = False
+    if _has_valid_data(history_df, "holdout_recall"):
+        ax1.plot(x, history_df["holdout_recall"], marker="o", linewidth=2, label="TP Recall", color="#4C78A8")
+        has_p1_data = True
+    if _has_valid_data(history_df, "holdout_f1"):
+        ax1.plot(x, history_df["holdout_f1"], marker="s", linewidth=2, label="TP F1", color="#F58518")
+        has_p1_data = True
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel("Score")
+    ax1.set_title("Holdout Classification: TP Recall & F1")
+    if has_p1_data:
+        ax1.legend(frameon=True)
+    else:
+        ax1.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax1.transAxes, fontsize=12, color="gray")
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xticks(x)
+
+    # Panel 2: Accuracy & Precision
+    ax2 = axes[0, 1]
+    has_p2_data = False
+    if _has_valid_data(history_df, "holdout_accuracy"):
+        ax2.plot(x, history_df["holdout_accuracy"], marker="o", linewidth=2, label="Accuracy", color="#54A24B")
+        has_p2_data = True
+    if _has_valid_data(history_df, "holdout_precision"):
+        ax2.plot(x, history_df["holdout_precision"], marker="s", linewidth=2, label="Precision", color="#E45756")
+        has_p2_data = True
+    ax2.set_xlabel("Iteration")
+    ax2.set_ylabel("Score")
+    ax2.set_title("Holdout Classification: Accuracy & Precision")
+    if has_p2_data:
+        ax2.legend(frameon=True)
+    else:
+        ax2.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax2.transAxes, fontsize=12, color="gray")
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xticks(x)
+
+    # Panel 3: Tmax RMSE & R2
+    ax3 = axes[1, 0]
+    has_p3_data = False
+    if _has_valid_data(history_df, "holdout_tmax_rmse"):
+        vals = history_df["holdout_tmax_rmse"].to_numpy()
+        if np.isfinite(vals).any():
+            ax3.plot(x, vals, marker="o", linewidth=2, label="Tmax RMSE", color="#B279A2")
+            has_p3_data = True
+    ax3.set_xlabel("Iteration")
+    ax3.set_ylabel("RMSE")
+    ax3.set_title("Holdout Regression: Tmax RMSE")
+    if has_p3_data:
+        ax3.legend(frameon=True)
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xticks(x)
+
+    ax3b = ax3.twinx()
+    has_p3b_data = False
+    if _has_valid_data(history_df, "holdout_tmax_r2"):
+        vals = history_df["holdout_tmax_r2"].to_numpy()
+        if np.isfinite(vals).any():
+            ax3b.plot(x, vals, marker="s", linewidth=2, linestyle="--", label="Tmax R²", color="#72B7B2")
+            has_p3b_data = True
+    ax3b.set_ylabel("R²")
+    if has_p3b_data:
+        ax3b.legend(frameon=True, loc="lower right")
+    if not has_p3_data and not has_p3b_data:
+        ax3.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax3.transAxes, fontsize=12, color="gray")
+
+    # Panel 4: Confusion counts
+    ax4 = axes[1, 1]
+    bar_width = 0.2
+    has_p4_data = all(_has_valid_data(history_df, c) for c in ["holdout_tp", "holdout_fn", "holdout_tn", "holdout_fp"])
+    if has_p4_data:
+        ax4.bar(x - 1.5*bar_width, history_df["holdout_tp"], width=bar_width, label="TP", color="#4C78A8")
+        ax4.bar(x - 0.5*bar_width, history_df["holdout_fn"], width=bar_width, label="FN", color="#E45756")
+        ax4.bar(x + 0.5*bar_width, history_df["holdout_tn"], width=bar_width, label="TN", color="#54A24B")
+        ax4.bar(x + 1.5*bar_width, history_df["holdout_fp"], width=bar_width, label="FP", color="#F58518")
+        ax4.legend(frameon=True, ncol=4)
+    else:
+        ax4.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax4.transAxes, fontsize=12, color="gray")
+    ax4.set_xlabel("Iteration")
+    ax4.set_ylabel("Count")
+    ax4.set_title("Holdout Confusion Matrix Counts")
+    ax4.grid(True, axis="y", alpha=0.3)
+    ax4.set_xticks(x)
+
+    fig.suptitle("Iteration Performance Trend (Holdout)", fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+    return True
+
+
+def recommend_next_batch_size(history_df, cfg):
+    """Recommend next batch size based on recent iteration performance."""
+    window = int(getattr(cfg, "BATCH_SIZE_DECISION_WINDOW", 3))
+    step_up = int(getattr(cfg, "BATCH_SIZE_STEP_UP", 5))
+    step_down = int(getattr(cfg, "BATCH_SIZE_STEP_DOWN", 5))
+    min_batch = int(getattr(cfg, "BATCH_SIZE_MIN", 16))
+    max_batch = int(getattr(cfg, "BATCH_SIZE_MAX", 40))
+    current = int(cfg.BATCH_SIZE)
+
+    if len(history_df) < window:
+        return {
+            "current_batch_size": current,
+            "recommended_batch_size": current,
+            "decision": "hold",
+            "reason": f"Not enough iterations ({len(history_df)} < {window}) for decision.",
+        }
+
+    recent = history_df.tail(window)
+
+    # Check recall trend
+    recall_vals = recent["holdout_recall"].dropna().to_numpy() if "holdout_recall" in recent.columns else np.array([])
+    f1_vals = recent["holdout_f1"].dropna().to_numpy() if "holdout_f1" in recent.columns else np.array([])
+    rmse_vals = recent["holdout_tmax_rmse"].dropna().to_numpy() if "holdout_tmax_rmse" in recent.columns else np.array([])
+
+    recall_stable = len(recall_vals) >= 2 and (recall_vals[-1] >= recall_vals[0] - 0.05)
+    f1_stable = len(f1_vals) >= 2 and (f1_vals[-1] >= f1_vals[0] - 0.05)
+    rmse_stable = len(rmse_vals) < 2 or (rmse_vals[-1] <= rmse_vals[0] * 1.1)
+
+    recall_improving = len(recall_vals) >= 2 and (recall_vals[-1] > recall_vals[0] + 0.02)
+    f1_improving = len(f1_vals) >= 2 and (f1_vals[-1] > f1_vals[0] + 0.02)
+
+    recall_degrading = len(recall_vals) >= 2 and (recall_vals[-1] < recall_vals[0] - 0.05)
+    f1_degrading = len(f1_vals) >= 2 and (f1_vals[-1] < f1_vals[0] - 0.05)
+    rmse_degrading = len(rmse_vals) >= 2 and (rmse_vals[-1] > rmse_vals[0] * 1.15)
+
+    if recall_degrading or f1_degrading or rmse_degrading:
+        new_batch = max(min_batch, current - step_down)
+        return {
+            "current_batch_size": current,
+            "recommended_batch_size": new_batch,
+            "decision": "decrease",
+            "reason": f"Performance degrading (recall_deg={recall_degrading}, f1_deg={f1_degrading}, rmse_deg={rmse_degrading}).",
+        }
+
+    if recall_stable and f1_stable and rmse_stable:
+        if recall_improving or f1_improving:
+            new_batch = min(max_batch, current + step_up)
+            return {
+                "current_batch_size": current,
+                "recommended_batch_size": new_batch,
+                "decision": "increase",
+                "reason": f"Performance stable and improving (recall_impr={recall_improving}, f1_impr={f1_improving}).",
+            }
+        else:
+            return {
+                "current_batch_size": current,
+                "recommended_batch_size": current,
+                "decision": "hold",
+                "reason": "Performance stable but not significantly improving.",
+            }
+
+    return {
+        "current_batch_size": current,
+        "recommended_batch_size": current,
+        "decision": "hold",
+        "reason": "Mixed signals; holding current batch size.",
+    }
+
+
 def _count_from_ratio(total, labels, ratio_by_label):
     raw = {k: total * float(ratio_by_label.get(k, 0.0)) for k in labels}
     counts = {k: int(math.floor(v)) for k, v in raw.items()}
@@ -663,6 +952,122 @@ def main():
     print(f"[INFO] Saved continuous-pairs dashboard: {output_pairs_dashboard_png}")
     save_selection_dashboard(df, selected, diag, config, output_dashboard_png)
     print(f"[INFO] Saved dashboard: {output_dashboard_png}")
+
+    # === Holdout Performance Evaluation ===
+    performance_dir = try_dir / "Performance"
+    performance_dir.mkdir(parents=True, exist_ok=True)
+    holdout_cm_png = performance_dir / "tp_notp_holdout_confusion_matrix.png"
+    holdout_tmax_png = performance_dir / "tmax_actual_vs_pred_holdout.png"
+
+    final_test_csv = getattr(config, "FINAL_TEST_CSV", None)
+    cm_metrics = None
+    tmax_metrics = None
+    y_holdout_class = None
+    y_holdout_pred_class = None
+
+    if final_test_csv and Path(final_test_csv).exists():
+        print(f"[INFO] Loading holdout test set: {final_test_csv}")
+        holdout_df = load_labeled_data(final_test_csv)
+        try:
+            validate_required_columns(holdout_df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, [], [])
+            holdout_df = attach_discrete_combo_id(holdout_df, valid_combos, config.DISCRETE_COLS)
+            x_holdout_raw, y_holdout_class, y_holdout_tmax = make_xy(holdout_df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL)
+            x_holdout = pre.transform(x_holdout_raw)
+
+            from acquisition import predict_outputs
+            holdout_pred = predict_outputs(selected_model, x_holdout)
+            y_holdout_pred_class = (np.asarray(holdout_pred["p_tp"], dtype=float) >= 0.5).astype(int)
+
+            cm_metrics = save_holdout_confusion_matrix(y_holdout_class, y_holdout_pred_class, holdout_cm_png, config)
+            print(f"[INFO] Saved holdout confusion matrix: {holdout_cm_png}")
+            print(f"[INFO] Holdout classification metrics: {cm_metrics}")
+
+            notp_mask = (y_holdout_class == config.PASS_LABEL)
+            if int(notp_mask.sum()) > 0:
+                tmax_metrics = save_holdout_tmax_actual_vs_pred(
+                    y_holdout_tmax[notp_mask],
+                    np.asarray(holdout_pred["tmax_pred"], dtype=float)[notp_mask],
+                    holdout_tmax_png,
+                )
+                print(f"[INFO] Saved holdout Tmax plot: {holdout_tmax_png}")
+                print(f"[INFO] Holdout Tmax metrics: {tmax_metrics}")
+            else:
+                print("[WARN] No NoTP samples in holdout set for Tmax evaluation.")
+        except Exception as e:
+            print(f"[WARN] Holdout evaluation failed: {e}")
+    else:
+        print(f"[WARN] FINAL_TEST_CSV not set or file not found. Skipping holdout evaluation.")
+
+    # === Save iteration summary for cumulative tracking ===
+    bucket_counts_actual = selected["selected_bucket"].value_counts().to_dict() if "selected_bucket" in selected.columns else {}
+    n_unique_combos = int(selected["discrete_combo_id"].nunique()) if "discrete_combo_id" in selected.columns else 0
+
+    iteration_summary = {
+        "input_csv": str(config.INPUT_CSV),
+        "input_n": int(len(df)),
+        "batch_size": int(config.BATCH_SIZE),
+        "selected_model": str(selection_report.get("selected_model", "gp")),
+        "gp_score": float(selection_report.get("gp_score", 0.0)) if selection_report.get("gp_score") is not None else None,
+        "mlp_score": float(selection_report.get("mlp_score", 0.0)) if selection_report.get("mlp_score") is not None else None,
+        "gp_composite_score": float(selection_report.get("gp_composite_score", 0.0)) if selection_report.get("gp_composite_score") is not None else None,
+        "mlp_composite_score": float(selection_report.get("mlp_composite_score", 0.0)) if selection_report.get("mlp_composite_score") is not None else None,
+        "holdout_accuracy": float(cm_metrics["accuracy"]) if cm_metrics else None,
+        "holdout_precision": float(cm_metrics["precision"]) if cm_metrics else None,
+        "holdout_recall": float(cm_metrics["recall"]) if cm_metrics else None,
+        "holdout_f1": float(cm_metrics["f1"]) if cm_metrics else None,
+        "holdout_tp": None,
+        "holdout_fn": None,
+        "holdout_tn": None,
+        "holdout_fp": None,
+        "holdout_tmax_rmse": float(tmax_metrics["rmse"]) if tmax_metrics else None,
+        "holdout_tmax_r2": float(tmax_metrics["r2"]) if tmax_metrics else None,
+        "holdout_tmax_n": int(tmax_metrics["n"]) if tmax_metrics else None,
+        "boundary_count": int(bucket_counts_actual.get("boundary", 0)),
+        "notp_high_tmax_count": int(bucket_counts_actual.get("notp_high_tmax", 0)),
+        "uncertainty_sparse_count": int(bucket_counts_actual.get("uncertainty_sparse", 0)),
+        "random_check_count": int(bucket_counts_actual.get("random_check", 0)),
+        "fill_mixed_count": int(bucket_counts_actual.get("fill_mixed", 0)),
+        "n_unique_combos_selected": n_unique_combos,
+    }
+
+    # Extract confusion matrix counts if available
+    if cm_metrics and final_test_csv and Path(final_test_csv).exists():
+        from sklearn.metrics import confusion_matrix as sk_cm
+        try:
+            cm_arr = sk_cm(y_holdout_class, y_holdout_pred_class, labels=[config.NOTP_LABEL, config.TP_LABEL])
+            iteration_summary["holdout_tn"] = int(cm_arr[0, 0])
+            iteration_summary["holdout_fp"] = int(cm_arr[0, 1])
+            iteration_summary["holdout_fn"] = int(cm_arr[1, 0])
+            iteration_summary["holdout_tp"] = int(cm_arr[1, 1])
+        except Exception:
+            pass
+
+    iteration_summary_path = try_dir / "iteration_summary.json"
+    with open(iteration_summary_path, "w", encoding="utf-8") as f:
+        json.dump(iteration_summary, f, indent=2, ensure_ascii=False)
+    print(f"[INFO] Saved iteration summary: {iteration_summary_path}")
+
+    # === Collect history from Itr_n folders and plot trend ===
+    history_df = collect_iteration_history(config.OUTPUT_DIR)
+    if len(history_df) > 0:
+        trend_plot_path = performance_dir / "iteration_performance_trend.png"
+        wrote_trend = save_iteration_performance_trend_plot(history_df, trend_plot_path)
+        if wrote_trend:
+            print(f"[INFO] Saved iteration performance trend plot: {trend_plot_path}")
+
+        # Save history CSV
+        history_csv_path = performance_dir / "iteration_history.csv"
+        history_df.to_csv(history_csv_path, index=False, encoding="utf-8-sig")
+        print(f"[INFO] Saved iteration history CSV: {history_csv_path}")
+
+        # Recommend next batch size
+        recommendation = recommend_next_batch_size(history_df, config)
+        recommendation_path = try_dir / "batch_size_recommendation.json"
+        with open(recommendation_path, "w", encoding="utf-8") as f:
+            json.dump(recommendation, f, indent=2, ensure_ascii=False)
+        print(f"[INFO] Batch size recommendation: {recommendation}")
+    else:
+        print("[INFO] No Itr_n folders found. Skipping cumulative trend analysis.")
 
     written = [
         output_candidates_csv.name,
