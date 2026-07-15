@@ -277,7 +277,8 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
 
     plt.style.use("seaborn-v0_8-whitegrid")
     fig = plt.figure(figsize=(18, 10), dpi=150)
-    fig.suptitle("Active Sampling 28-Point Selection Dashboard", fontsize=22, fontweight="bold", y=0.98)
+    n_selected = int(len(selected_df))
+    fig.suptitle(f"Active Sampling {n_selected}-Point Selection Dashboard", fontsize=22, fontweight="bold", y=0.98)
 
     ax1 = plt.subplot(2, 2, 1)
     x = np.arange(len(buckets))
@@ -330,7 +331,7 @@ def save_selection_dashboard(base_df, selected_df, diag_df, cfg, output_png):
     ax3 = plt.subplot(2, 2, 3)
     idx = np.arange(len(diag_plot))
     ax3.bar(idx, diag_plot["n_total"], label="Before", color="#CFE8CF")
-    ax3.bar(idx, diag_plot["selected_new"], bottom=diag_plot["n_total"], label="Selected +28", color="#2A9D8F")
+    ax3.bar(idx, diag_plot["selected_new"], bottom=diag_plot["n_total"], label=f"Selected +{n_selected}", color="#2A9D8F")
     ax3.set_title("3) Discrete Combo Coverage (Before vs After)")
     ax3.set_ylabel("Samples per combo")
     step = max(1, len(diag_plot) // min(20, len(diag_plot)))
