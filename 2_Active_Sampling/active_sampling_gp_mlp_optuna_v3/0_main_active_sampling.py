@@ -651,8 +651,6 @@ def save_iteration_performance_trend_plot(history_df, output_png):
     ax3.set_xlabel("Iteration")
     ax3.set_ylabel("RMSE")
     ax3.set_title("Holdout Regression: Tmax RMSE")
-    if has_p3_data:
-        ax3.legend(frameon=True)
     ax3.grid(True, alpha=0.3)
     ax3.set_xticks(x)
 
@@ -664,27 +662,41 @@ def save_iteration_performance_trend_plot(history_df, output_png):
             ax3b.plot(x, vals, marker="s", linewidth=2, linestyle="--", label="Tmax R²", color="#72B7B2")
             has_p3b_data = True
     ax3b.set_ylabel("R²")
-    if has_p3b_data:
-        ax3b.legend(frameon=True, loc="lower right")
+    if has_p3_data or has_p3b_data:
+        handles1, labels1 = ax3.get_legend_handles_labels()
+        handles2, labels2 = ax3b.get_legend_handles_labels()
+        ax3.legend(handles1 + handles2, labels1 + labels2, frameon=True, loc="best")
     if not has_p3_data and not has_p3b_data:
         ax3.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax3.transAxes, fontsize=12, color="gray")
 
-    # Panel 4: Confusion counts
+    # Panel 4: Sampling uncertainty trend (Option B)
     ax4 = axes[1, 1]
-    bar_width = 0.2
-    has_p4_data = all(_has_valid_data(history_df, c) for c in ["holdout_tp", "holdout_fn", "holdout_tn", "holdout_fp"])
-    if has_p4_data:
-        ax4.bar(x - 1.5*bar_width, history_df["holdout_tp"], width=bar_width, label="TP", color="#4C78A8")
-        ax4.bar(x - 0.5*bar_width, history_df["holdout_fn"], width=bar_width, label="FN", color="#E45756")
-        ax4.bar(x + 0.5*bar_width, history_df["holdout_tn"], width=bar_width, label="TN", color="#54A24B")
-        ax4.bar(x + 1.5*bar_width, history_df["holdout_fp"], width=bar_width, label="FP", color="#F58518")
-        ax4.legend(frameon=True, ncol=4)
+    has_p4_left_data = False
+    if _has_valid_data(history_df, "uncertainty_mean"):
+        ax4.plot(x, history_df["uncertainty_mean"], marker="o", linewidth=2, label="Uncertainty Mean", color="#4C78A8")
+        has_p4_left_data = True
+    if _has_valid_data(history_df, "uncertainty_p90"):
+        ax4.plot(x, history_df["uncertainty_p90"], marker="s", linewidth=2, linestyle="--", label="Uncertainty P90", color="#F58518")
+        has_p4_left_data = True
+
+    ax4b = ax4.twinx()
+    has_p4_right_data = False
+    if _has_valid_data(history_df, "uncertainty_high_ratio"):
+        ax4b.plot(x, history_df["uncertainty_high_ratio"], marker="^", linewidth=2, linestyle=":", label="High-Uncertainty Ratio", color="#E45756")
+        has_p4_right_data = True
+
+    if has_p4_left_data or has_p4_right_data:
+        handles1, labels1 = ax4.get_legend_handles_labels()
+        handles2, labels2 = ax4b.get_legend_handles_labels()
+        ax4.legend(handles1 + handles2, labels1 + labels2, frameon=True, loc="best")
     else:
         ax4.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax4.transAxes, fontsize=12, color="gray")
+
     ax4.set_xlabel("Iteration")
-    ax4.set_ylabel("Count")
-    ax4.set_title("Holdout Confusion Matrix Counts")
-    ax4.grid(True, axis="y", alpha=0.3)
+    ax4.set_ylabel("Uncertainty")
+    ax4b.set_ylabel("High Ratio")
+    ax4.set_title("Sampling Uncertainty: Mean, P90, High Ratio")
+    ax4.grid(True, alpha=0.3)
     ax4.set_xticks(x)
 
     fig.suptitle("Iteration Performance Trend (Holdout)", fontsize=16, fontweight="bold")
@@ -1002,6 +1014,20 @@ def main():
     bucket_counts_actual = selected["selected_bucket"].value_counts().to_dict() if "selected_bucket" in selected.columns else {}
     n_unique_combos = int(selected["discrete_combo_id"].nunique()) if "discrete_combo_id" in selected.columns else 0
 
+    uncertainty_threshold = float(getattr(config, "UNCERTAINTY_HIGH_THRESHOLD", 0.70))
+    uncertainty_values = np.array([], dtype=float)
+    uncertainty_source = None
+    if "clf_uncertainty_scaled" in selected.columns:
+        uncertainty_values = pd.to_numeric(selected["clf_uncertainty_scaled"], errors="coerce").dropna().to_numpy(dtype=float)
+        uncertainty_source = "clf_uncertainty_scaled"
+    elif "clf_uncertainty_raw" in selected.columns:
+        uncertainty_values = pd.to_numeric(selected["clf_uncertainty_raw"], errors="coerce").dropna().to_numpy(dtype=float)
+        uncertainty_source = "clf_uncertainty_raw"
+
+    uncertainty_mean = float(np.nanmean(uncertainty_values)) if uncertainty_values.size else None
+    uncertainty_p90 = float(np.nanpercentile(uncertainty_values, 90)) if uncertainty_values.size else None
+    uncertainty_high_ratio = float(np.mean(uncertainty_values >= uncertainty_threshold)) if uncertainty_values.size else None
+
     iteration_summary = {
         "input_csv": str(config.INPUT_CSV),
         "input_n": int(len(df)),
@@ -1028,6 +1054,11 @@ def main():
         "random_check_count": int(bucket_counts_actual.get("random_check", 0)),
         "fill_mixed_count": int(bucket_counts_actual.get("fill_mixed", 0)),
         "n_unique_combos_selected": n_unique_combos,
+        "uncertainty_metric_source": uncertainty_source,
+        "uncertainty_high_threshold": uncertainty_threshold,
+        "uncertainty_mean": uncertainty_mean,
+        "uncertainty_p90": uncertainty_p90,
+        "uncertainty_high_ratio": uncertainty_high_ratio,
     }
 
     # Extract confusion matrix counts if available

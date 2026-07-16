@@ -23,5 +23,10 @@
   "uncertainty_sparse_count": 2,
   "random_check_count": 1,
   "fill_mixed_count": 0,
-  "n_unique_combos_selected": 9
+  "n_unique_combos_selected": 9,
+  "uncertainty_metric_source": "clf_uncertainty_scaled",
+  "uncertainty_high_threshold": 0.7,
+  "uncertainty_mean": 0.6495571950688739,
+  "uncertainty_p90": 0.8333818685657325,
+  "uncertainty_high_ratio": 0.4782608695652174
 }

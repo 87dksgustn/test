@@ -4,7 +4,7 @@ from pathlib import Path
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_1_dataset.csv"
+INPUT_CSV = "Itr_2_dataset.csv"
 FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
 CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -203,6 +203,10 @@ BATCH_SIZE_MIN = 16
 BATCH_SIZE_MAX = 40
 BATCH_SIZE_STEP_UP = 5
 BATCH_SIZE_STEP_DOWN = 5
+
+# Uncertainty trend settings (Option B)
+# Used for high-ratio metric in iteration_summary and trend graph.
+UNCERTAINTY_HIGH_THRESHOLD = 0.70
 
 # ============================================================
 # CV stabilization
