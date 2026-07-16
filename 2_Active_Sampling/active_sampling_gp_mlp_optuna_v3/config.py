@@ -1,10 +1,10 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 # ============================================================
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_2_dataset.csv"
+INPUT_CSV = "Itr_3_dataset.csv"
 FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
 CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -96,8 +96,8 @@ BOUNDARY_WEIGHTS_MLP = {
 }
 
 NOTP_HIGH_TMAX_WEIGHTS = {
-    "tmax": 0.70,  # Ver3: notp_window 제거분 이관 (0.40 → 0.70)
-    "notp_window": 0.00,  # Ver3: 0.25 집중 무의미, 제거
+    "tmax": 0.70,  # Ver3: notp_window ?쒓굅遺??닿? (0.40 ??0.70)
+    "notp_window": 0.00,  # Ver3: 0.25 吏묒쨷 臾댁쓽誘? ?쒓굅
     "tmax_uncertainty": 0.10,
     "local_sparsity": 0.10,
     "combo_priority": 0.10,
@@ -287,3 +287,4 @@ OUTPUT_DIAGNOSTICS_CSV = OUTPUT_DIR / "combo_diagnostics.csv"
 OUTPUT_MODEL_SELECTION_JSON = OUTPUT_DIR / "model_selection_report.json"
 OUTPUT_OPTUNA_REPORT_JSON = OUTPUT_DIR / "optuna_report.json"
 OUTPUT_CV_FOLD_METRICS_CSV = OUTPUT_DIR / "cv_fold_metrics.csv"
+

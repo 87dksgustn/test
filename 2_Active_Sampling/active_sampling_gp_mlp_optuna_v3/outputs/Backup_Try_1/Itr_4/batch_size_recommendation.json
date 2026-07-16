@@ -1,0 +1,6 @@
+{
+  "current_batch_size": 23,
+  "recommended_batch_size": 28,
+  "decision": "increase",
+  "reason": "Performance stable and improving (recall_impr=False, f1_impr=True)."
+}
