@@ -204,6 +204,37 @@ BATCH_SIZE_MAX = 40
 BATCH_SIZE_STEP_UP = 5
 BATCH_SIZE_STEP_DOWN = 5
 
+# ============================================================
+# Dynamic control switches (manual / shadow / auto)
+# ============================================================
+# manual: use configured values, ignore recommendations
+# shadow: use configured values but compute and log recommendations
+# auto: apply recommended values automatically
+BATCH_SIZE_MODE = "shadow"
+BUCKET_RATIO_MODE = "shadow"
+
+# Bucket ratio dynamic adjustment parameters
+BUCKET_RATIO_DECISION_WINDOW = 3
+BUCKET_RATIO_STEP_BASE = 0.08
+BUCKET_RATIO_STEP_MAX = 0.12
+BUCKET_RATIO_STEP_STABLE = 0.04
+UNCERTAINTY_TARGET_LOW = 0.20
+UNCERTAINTY_TARGET_HIGH = 0.35
+
+# Bucket ratio min/max constraints
+BUCKET_RATIO_MIN = {
+    "boundary": 0.50,
+    "notp_high_tmax": 0.08,
+    "uncertainty_sparse": 0.02,
+    "random_check": 0.02,
+}
+BUCKET_RATIO_MAX = {
+    "boundary": 0.85,
+    "notp_high_tmax": 0.28,
+    "uncertainty_sparse": 0.18,
+    "random_check": 0.10,
+}
+
 # Uncertainty trend settings (Option B)
 # Used for high-ratio metric in iteration_summary and trend graph.
 UNCERTAINTY_HIGH_THRESHOLD = 0.70

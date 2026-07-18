@@ -775,6 +775,105 @@ def recommend_next_batch_size(history_df, cfg):
     }
 
 
+def normalize_ratio_dict(ratio_dict):
+    """Normalize ratio dict so values sum to 1.0; fallback to uniform."""
+    keys = list(ratio_dict.keys())
+    if not keys:
+        return {}
+    total = sum(float(v) for v in ratio_dict.values())
+    if total <= 0:
+        return {k: 1.0 / len(keys) for k in keys}
+    return {k: float(ratio_dict.get(k, 0.0)) / total for k in keys}
+
+
+def clamp_ratio_dict(ratio_dict, min_dict, max_dict):
+    """Clamp each ratio within bounds and normalize."""
+    out = {}
+    for k, v in ratio_dict.items():
+        lo = float(min_dict.get(k, 0.0))
+        hi = float(max_dict.get(k, 1.0))
+        out[k] = min(max(float(v), lo), hi)
+    return normalize_ratio_dict(out)
+
+
+def recommend_bucket_ratio(history_df, cfg, current_ratio):
+    """Recommend bucket ratio from recent holdout/uncertainty trends."""
+    window = int(getattr(cfg, "BUCKET_RATIO_DECISION_WINDOW", 3))
+    step_base = float(getattr(cfg, "BUCKET_RATIO_STEP_BASE", 0.08))
+    step_max = float(getattr(cfg, "BUCKET_RATIO_STEP_MAX", 0.12))
+    step_stable = float(getattr(cfg, "BUCKET_RATIO_STEP_STABLE", 0.04))
+    unc_target_low = float(getattr(cfg, "UNCERTAINTY_TARGET_LOW", 0.20))
+    unc_target_high = float(getattr(cfg, "UNCERTAINTY_TARGET_HIGH", 0.35))
+    min_dict = dict(getattr(cfg, "BUCKET_RATIO_MIN", {}))
+    max_dict = dict(getattr(cfg, "BUCKET_RATIO_MAX", {}))
+
+    current = normalize_ratio_dict(dict(current_ratio))
+    if len(history_df) < window:
+        return {
+            "current_bucket_ratio": {k: float(v) for k, v in current.items()},
+            "recommended_bucket_ratio": {k: float(v) for k, v in current.items()},
+            "decision": "hold",
+            "reason": f"Not enough iterations ({len(history_df)} < {window}) for decision.",
+        }
+
+    recent = history_df.tail(window)
+    f1_vals = recent["holdout_f1"].dropna().to_numpy() if "holdout_f1" in recent.columns else np.array([])
+    recall_vals = recent["holdout_recall"].dropna().to_numpy() if "holdout_recall" in recent.columns else np.array([])
+    rmse_vals = recent["holdout_tmax_rmse"].dropna().to_numpy() if "holdout_tmax_rmse" in recent.columns else np.array([])
+    unc_vals = recent["uncertainty_high_ratio"].dropna().to_numpy() if "uncertainty_high_ratio" in recent.columns else np.array([])
+
+    f1_delta = float(f1_vals[-1] - f1_vals[0]) if len(f1_vals) >= 2 else 0.0
+    recall_delta = float(recall_vals[-1] - recall_vals[0]) if len(recall_vals) >= 2 else 0.0
+    rmse_delta_pct = float((rmse_vals[-1] - rmse_vals[0]) / (rmse_vals[0] + 1e-12) * 100.0) if len(rmse_vals) >= 2 else 0.0
+    unc_high_now = float(unc_vals[-1]) if len(unc_vals) >= 1 else None
+
+    severe = (f1_delta < -0.04) or (recall_delta < -0.04) or (rmse_delta_pct > 10.0)
+    improving = ((f1_delta > 0.01) or (recall_delta > 0.01)) and (rmse_delta_pct <= 5.0)
+    not_degrading = (f1_delta > -0.04) and (recall_delta > -0.04) and (rmse_delta_pct <= 5.0)
+
+    if severe:
+        step = step_max
+        decision = "severe_degradation"
+    elif improving and not_degrading:
+        step = step_stable
+        decision = "stable_improving"
+    else:
+        step = step_base
+        decision = "mixed"
+
+    rec = dict(current)
+    if severe:
+        rec["boundary"] = rec.get("boundary", 0.0) + step
+        rec["uncertainty_sparse"] = rec.get("uncertainty_sparse", 0.0) - step * 0.6
+        rec["random_check"] = rec.get("random_check", 0.0) - step * 0.4
+
+    if unc_high_now is not None and unc_high_now > unc_target_high:
+        rec["uncertainty_sparse"] = rec.get("uncertainty_sparse", 0.0) - step * 0.5
+        rec["boundary"] = rec.get("boundary", 0.0) + step * 0.3
+    elif unc_high_now is not None and unc_high_now < unc_target_low and not severe:
+        rec["uncertainty_sparse"] = rec.get("uncertainty_sparse", 0.0) + step * 0.4
+        rec["boundary"] = rec.get("boundary", 0.0) - step * 0.2
+
+    if rmse_delta_pct > 5.0:
+        rec["notp_high_tmax"] = rec.get("notp_high_tmax", 0.0) + step * 0.3
+        rec["random_check"] = rec.get("random_check", 0.0) - step * 0.2
+
+    rec = clamp_ratio_dict(rec, min_dict, max_dict)
+
+    unc_txt = "N/A" if unc_high_now is None else f"{unc_high_now:.3f}"
+    reason = (
+        f"decision={decision}; f1_delta={f1_delta:.4f}; recall_delta={recall_delta:.4f}; "
+        f"rmse_delta_pct={rmse_delta_pct:.2f}; unc_high={unc_txt}"
+    )
+
+    return {
+        "current_bucket_ratio": {k: float(v) for k, v in current.items()},
+        "recommended_bucket_ratio": {k: float(v) for k, v in rec.items()},
+        "decision": decision,
+        "reason": reason,
+    }
+
+
 def _count_from_ratio(total, labels, ratio_by_label):
     raw = {k: total * float(ratio_by_label.get(k, 0.0)) for k in labels}
     counts = {k: int(math.floor(v)) for k, v in raw.items()}
@@ -936,15 +1035,41 @@ def main():
     scoring_cfg = build_scoring_config(config, getattr(selected_model, "kind", "gp"), effective_boundary_weights)
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
     scored.nlargest(2000, "acq_boundary").to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
-    bucket_target_counts = bucket_counts(config.BATCH_SIZE, config.BUCKET_RATIO)
+
+    # === Dynamic batch size & bucket ratio control ===
+    confirmed_history_df = collect_iteration_history(config.OUTPUT_DIR)
+
+    batch_size_mode = str(getattr(config, "BATCH_SIZE_MODE", "manual")).lower()
+    bucket_ratio_mode = str(getattr(config, "BUCKET_RATIO_MODE", "manual")).lower()
+
+    batch_rec = recommend_next_batch_size(confirmed_history_df, config)
+    bucket_ratio_rec = recommend_bucket_ratio(confirmed_history_df, config, config.BUCKET_RATIO)
+
+    if batch_size_mode == "auto" and batch_rec.get("recommended_batch_size"):
+        effective_batch_size = int(batch_rec["recommended_batch_size"])
+        print(f"[INFO] BATCH_SIZE_MODE=auto -> applying recommended batch_size={effective_batch_size}")
+    else:
+        effective_batch_size = int(config.BATCH_SIZE)
+        if batch_size_mode == "shadow":
+            print(f"[INFO] BATCH_SIZE_MODE=shadow -> using config batch_size={effective_batch_size}, recommended={batch_rec.get('recommended_batch_size')}")
+
+    if bucket_ratio_mode == "auto" and bucket_ratio_rec.get("recommended_bucket_ratio"):
+        effective_bucket_ratio = bucket_ratio_rec["recommended_bucket_ratio"]
+        print(f"[INFO] BUCKET_RATIO_MODE=auto -> applying recommended bucket_ratio: {effective_bucket_ratio}")
+    else:
+        effective_bucket_ratio = dict(config.BUCKET_RATIO)
+        if bucket_ratio_mode == "shadow":
+            print(f"[INFO] BUCKET_RATIO_MODE=shadow -> using config bucket_ratio, recommended: {bucket_ratio_rec.get('recommended_bucket_ratio')}")
+
+    bucket_target_counts = bucket_counts(effective_batch_size, effective_bucket_ratio)
     bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
 
     selected = select_batch(
         scored,
         x_candidate,
         df,
-        config.BATCH_SIZE,
-        config.BUCKET_RATIO,
+        effective_batch_size,
+        effective_bucket_ratio,
         config.MAX_SAMPLES_PER_COMBO,
         config.MIN_BATCH_DISTANCE,
         config.RANDOM_SEED,
@@ -1031,7 +1156,16 @@ def main():
     iteration_summary = {
         "input_csv": str(config.INPUT_CSV),
         "input_n": int(len(df)),
-        "batch_size": int(config.BATCH_SIZE),
+        "batch_size": int(effective_batch_size),
+        "batch_size_mode": batch_size_mode,
+        "batch_size_config": int(config.BATCH_SIZE),
+        "batch_size_recommended": int(batch_rec.get("recommended_batch_size", config.BATCH_SIZE)) if batch_rec.get("recommended_batch_size") else None,
+        "batch_size_decision": batch_rec.get("decision"),
+        "bucket_ratio_mode": bucket_ratio_mode,
+        "bucket_ratio_applied": effective_bucket_ratio,
+        "bucket_ratio_config": dict(config.BUCKET_RATIO),
+        "bucket_ratio_recommended": bucket_ratio_rec.get("recommended_bucket_ratio"),
+        "bucket_ratio_decision": bucket_ratio_rec.get("decision"),
         "selected_model": str(selection_report.get("selected_model", "gp")),
         "gp_score": float(selection_report.get("gp_score", 0.0)) if selection_report.get("gp_score") is not None else None,
         "mlp_score": float(selection_report.get("mlp_score", 0.0)) if selection_report.get("mlp_score") is not None else None,
@@ -1078,27 +1212,47 @@ def main():
         json.dump(iteration_summary, f, indent=2, ensure_ascii=False)
     print(f"[INFO] Saved iteration summary: {iteration_summary_path}")
 
-    # === Collect history from Itr_n folders and plot trend ===
+    # === Collect history from Itr_n folders and include current run ===
     history_df = collect_iteration_history(config.OUTPUT_DIR)
+    base_itr_num = int(history_df["itr_num"].max()) if len(history_df) > 0 and "itr_num" in history_df.columns else 0
+    current_row = dict(iteration_summary)
+    current_row["itr_num"] = base_itr_num + 1
+    current_row["itr_folder"] = f"{try_dir.name}_current"
+    current_row["is_current_run"] = True
+
     if len(history_df) > 0:
-        trend_plot_path = performance_dir / "iteration_performance_trend.png"
-        wrote_trend = save_iteration_performance_trend_plot(history_df, trend_plot_path)
-        if wrote_trend:
-            print(f"[INFO] Saved iteration performance trend plot: {trend_plot_path}")
-
-        # Save history CSV
-        history_csv_path = performance_dir / "iteration_history.csv"
-        history_df.to_csv(history_csv_path, index=False, encoding="utf-8-sig")
-        print(f"[INFO] Saved iteration history CSV: {history_csv_path}")
-
-        # Recommend next batch size
-        recommendation = recommend_next_batch_size(history_df, config)
-        recommendation_path = try_dir / "batch_size_recommendation.json"
-        with open(recommendation_path, "w", encoding="utf-8") as f:
-            json.dump(recommendation, f, indent=2, ensure_ascii=False)
-        print(f"[INFO] Batch size recommendation: {recommendation}")
+        history_df = history_df.copy()
+        if "is_current_run" not in history_df.columns:
+            history_df["is_current_run"] = False
+        history_with_current = pd.concat([history_df, pd.DataFrame([current_row])], ignore_index=True)
     else:
-        print("[INFO] No Itr_n folders found. Skipping cumulative trend analysis.")
+        history_with_current = pd.DataFrame([current_row])
+
+    history_with_current = history_with_current.sort_values("itr_num").reset_index(drop=True)
+
+    trend_plot_path = performance_dir / "iteration_performance_trend.png"
+    wrote_trend = save_iteration_performance_trend_plot(history_with_current, trend_plot_path)
+    if wrote_trend:
+        print(f"[INFO] Saved iteration performance trend plot (including current run): {trend_plot_path}")
+
+    # Save history CSV
+    history_csv_path = performance_dir / "iteration_history.csv"
+    history_with_current.to_csv(history_csv_path, index=False, encoding="utf-8-sig")
+    print(f"[INFO] Saved iteration history CSV (including current run): {history_csv_path}")
+
+    # Recommend next batch size
+    recommendation = recommend_next_batch_size(history_with_current, config)
+    recommendation_path = try_dir / "batch_size_recommendation.json"
+    with open(recommendation_path, "w", encoding="utf-8") as f:
+        json.dump(recommendation, f, indent=2, ensure_ascii=False)
+    print(f"[INFO] Batch size recommendation: {recommendation}")
+
+    # Recommend next bucket ratio
+    bucket_ratio_recommendation = recommend_bucket_ratio(history_with_current, config, effective_bucket_ratio)
+    bucket_ratio_rec_path = try_dir / "bucket_ratio_recommendation.json"
+    with open(bucket_ratio_rec_path, "w", encoding="utf-8") as f:
+        json.dump(bucket_ratio_recommendation, f, indent=2, ensure_ascii=False)
+    print(f"[INFO] Bucket ratio recommendation: {bucket_ratio_recommendation}")
 
     written = [
         output_candidates_csv.name,
