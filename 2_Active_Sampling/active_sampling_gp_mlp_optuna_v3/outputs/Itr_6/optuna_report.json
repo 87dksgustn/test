@@ -1,0 +1,37 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": true,
+    "mlp_optuna_eligible": false,
+    "n_total": 261,
+    "n_notp": 123,
+    "n_tp": 138
+  },
+  "gp": {
+    "best_value": 0.8755197301533871,
+    "n_trials": 30,
+    "best_params": {
+      "kernel": "Matern52",
+      "constant": 1.5930522616241019,
+      "length_scale": 2.2989971688740667
+    }
+  },
+  "mlp": {
+    "skipped": true,
+    "reason": "MLP Optuna eligibility conditions not met."
+  },
+  "tmax": {
+    "best_value_rmse": 2.093110270087211,
+    "n_trials": 25,
+    "best_params": {
+      "kernel": "Matern52",
+      "constant": 8.858301403737517,
+      "length_scale": 3.8874782006088173,
+      "noise_level": 7.368499796074015e-05,
+      "alpha": 7.52741311465721e-07,
+      "normalize_y": true
+    },
+    "objective": "minimize_noTP_tmax_rmse"
+  }
+}

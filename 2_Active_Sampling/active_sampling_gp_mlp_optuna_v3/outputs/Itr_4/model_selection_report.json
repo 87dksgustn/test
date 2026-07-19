@@ -1,0 +1,71 @@
+{
+  "model_mode": "auto",
+  "selected_model": "gp",
+  "reason": "MLP is not eligible. Falling back to GP.",
+  "gp_cv_result": {
+    "fold_count": 5,
+    "accuracy_mean": 0.9140534262485481,
+    "accuracy_std": 0.023918337228192494,
+    "accuracy": 0.9140534262485481,
+    "tp_precision_mean": 0.9244255744255744,
+    "tp_precision_std": 0.04160980073960104,
+    "tp_precision": 0.9244255744255744,
+    "tp_recall_mean": 0.9213438735177867,
+    "tp_recall_std": 0.04228325413538763,
+    "tp_recall": 0.9213438735177867,
+    "tp_f1_mean": 0.9213713338333399,
+    "tp_f1_std": 0.020829188853633107,
+    "tp_f1": 0.9213713338333399,
+    "tmax_mae_mean": 2.0132312143413795,
+    "tmax_mae_std": 0.6872511745036636,
+    "tmax_mae": 2.0132312143413795,
+    "tmax_rmse_mean": 2.692740442580944,
+    "tmax_rmse_std": 1.0049075494251316,
+    "tmax_rmse": 2.692740442580944,
+    "tmax_r2_mean": 0.9950289530384946,
+    "tmax_r2_std": 0.004019854143122181,
+    "tmax_r2": 0.9950289530384946,
+    "weighted_mean_score": 0.9213521116124527,
+    "weighted_std_score": 0.03584703455086127,
+    "stable_score": 0.903428594337022,
+    "cv_splits": 5
+  },
+  "gp_score": 0.903428594337022,
+  "mlp_eligibility": {
+    "n_total": 209,
+    "n_notp": 95,
+    "n_tp": 114,
+    "min_combo_count": 12,
+    "torch_available": true,
+    "notp_total": false,
+    "notp_count": false,
+    "tp_count": true,
+    "combo_floor": true,
+    "torch_ready": true,
+    "eligible": false
+  },
+  "mlp_cv_result": null,
+  "mlp_score": null,
+  "gp_holdout_result": null,
+  "mlp_holdout_result": null,
+  "composite_weights": {
+    "cv": 0.3,
+    "holdout": 0.7
+  },
+  "gp_composite_score": null,
+  "mlp_composite_score": null,
+  "tuned_gp_params": {
+    "kernel": "RBF",
+    "constant": 0.5404103854647329,
+    "length_scale": 1.4253164479427205
+  },
+  "tuned_mlp_params": null,
+  "tuned_tmax_params": {
+    "kernel": "Matern32",
+    "constant": 5.199502796373089,
+    "length_scale": 1.1410135604111389,
+    "noise_level": 7.425998765122022e-07,
+    "alpha": 9.605331584077227e-08,
+    "normalize_y": true
+  }
+}

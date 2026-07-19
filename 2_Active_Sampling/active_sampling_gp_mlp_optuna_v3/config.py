@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_2_dataset.csv"
+INPUT_CSV = "Itr_5_dataset.csv"
 FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
 CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -210,8 +210,8 @@ BATCH_SIZE_STEP_DOWN = 5
 # manual: use configured values, ignore recommendations
 # shadow: use configured values but compute and log recommendations
 # auto: apply recommended values automatically
-BATCH_SIZE_MODE = "shadow"
-BUCKET_RATIO_MODE = "shadow"
+BATCH_SIZE_MODE = "auto"
+BUCKET_RATIO_MODE = "auto"
 
 # Bucket ratio dynamic adjustment parameters
 BUCKET_RATIO_DECISION_WINDOW = 3
