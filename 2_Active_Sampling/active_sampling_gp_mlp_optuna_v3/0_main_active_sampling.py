@@ -1119,6 +1119,54 @@ def main():
             print(f"[INFO] Saved holdout confusion matrix: {holdout_cm_png}")
             print(f"[INFO] Holdout classification metrics: {cm_metrics}")
 
+            # === Save misclassified samples detail ===
+            misclassified_mask = (y_holdout_class != y_holdout_pred_class)
+            if misclassified_mask.sum() > 0:
+                misclassified_df = holdout_df.loc[misclassified_mask].copy()
+                # Add 1-based row number from original holdout CSV (header is row 1, data starts row 2)
+                misclassified_df["holdout_row_num"] = [i + 2 for i in misclassified_df.index]
+                misclassified_df["actual_label"] = y_holdout_class[misclassified_mask]
+                misclassified_df["predicted_label"] = y_holdout_pred_class[misclassified_mask]
+                misclassified_df["p_tp"] = np.asarray(holdout_pred["p_tp"], dtype=float)[misclassified_mask]
+                misclassified_df["p_notp"] = np.asarray(holdout_pred["p_notp"], dtype=float)[misclassified_mask]
+                misclassified_df["error_type"] = misclassified_df.apply(
+                    lambda r: "FN (missed TP)" if r["actual_label"] == config.TP_LABEL else "FP (false TP)", axis=1
+                )
+                # Add pattern analysis
+                def analyze_pattern(row):
+                    notes = []
+                    p_tp_val = row["p_tp"]
+                    cell_d = row.get("A_Cell_D", None)
+                    combo = row.get("discrete_combo_id", "")
+                    barrier_type = row.get("B_Barrier_Type", "")
+                    outer_type = row.get("D_Barrier_Outer_Type", "")
+                    if row["error_type"] == "FP (false TP)":
+                        if p_tp_val > 0.7:
+                            notes.append("high confidence FP (p_tp>{:.2f})".format(p_tp_val))
+                        if cell_d is not None and cell_d < 10:
+                            notes.append("low Cell_D={:.1f}".format(cell_d))
+                    else:  # FN
+                        if 0.4 <= p_tp_val <= 0.6:
+                            notes.append("boundary region (p_tp={:.2f})".format(p_tp_val))
+                        elif p_tp_val < 0.4:
+                            notes.append("low p_tp={:.2f}".format(p_tp_val))
+                        if cell_d is not None and cell_d > 12:
+                            notes.append("high Cell_D={:.1f}".format(cell_d))
+                    if barrier_type and outer_type:
+                        notes.append(f"combo={barrier_type}-{outer_type}")
+                    return "; ".join(notes) if notes else "-"
+                misclassified_df["pattern_note"] = misclassified_df.apply(analyze_pattern, axis=1)
+
+                misclassified_csv = performance_dir / "holdout_misclassified_samples.csv"
+                cols_front = ["holdout_row_num", "error_type", "pattern_note", "actual_label", "predicted_label", "p_tp", "p_notp"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS
+                cols_rest = [c for c in misclassified_df.columns if c not in cols_front]
+                misclassified_df = misclassified_df[cols_front + cols_rest]
+                misclassified_df.to_csv(misclassified_csv, index=False, encoding="utf-8-sig")
+                print(f"[INFO] Saved misclassified samples: {misclassified_csv} ({len(misclassified_df)} samples)")
+                fn_count = (misclassified_df["error_type"] == "FN (missed TP)").sum()
+                fp_count = (misclassified_df["error_type"] == "FP (false TP)").sum()
+                print(f"[INFO] Misclassified breakdown: FN={fn_count}, FP={fp_count}")
+
             notp_mask = (y_holdout_class == config.PASS_LABEL)
             if int(notp_mask.sum()) > 0:
                 tmax_metrics = save_holdout_tmax_actual_vs_pred(
