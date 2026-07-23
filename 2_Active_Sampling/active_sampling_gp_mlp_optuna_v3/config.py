@@ -4,10 +4,22 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_8_dataset.csv"
+INPUT_CSV = "Itr_10_dataset.csv"
 FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
-CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
+# Base continuous columns (original features)
+BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
+
+# Interaction terms: (col1, col2, new_col_name)
+# Set to empty list [] to disable interaction terms
+INTERACTION_TERMS = [
+    ("A_Cell_D", "F_ThermalResin_Thx", "CellD_x_Resin"),
+    ("C_Barrier_Thx", "E_Barrier_Outer_Thx", "Barrier_x_Outer"),
+]
+
+# Final continuous columns = base + interaction
+CONTINUOUS_COLS = BASE_CONTINUOUS_COLS + [t[2] for t in INTERACTION_TERMS]
+
 DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
 
 PASSFAIL_COL = "TP_NoTP"
@@ -30,6 +42,11 @@ CONTINUOUS_BOUNDS = {
     "C_Barrier_Thx": (0.25, 2.5),
     "E_Barrier_Outer_Thx": (1.1, 3.0),
     "F_ThermalResin_Thx": (0.5, 2.5),
+    # Interaction term bounds (computed from base bounds)
+    # CellD_x_Resin: 8~16 × 0.5~2.5 = 4~40
+    # Barrier_x_Outer: 0.25~2.5 × 1.1~3.0 = 0.275~7.5
+    "CellD_x_Resin": (4.0, 40.0),
+    "Barrier_x_Outer": (0.275, 7.5),
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.

@@ -31,6 +31,17 @@ logging.basicConfig(
 )
 
 
+def add_interaction_terms(df, interaction_terms):
+    """Add interaction term columns to DataFrame."""
+    if not interaction_terms:
+        return df
+    df = df.copy()
+    for col1, col2, new_col in interaction_terms:
+        if col1 in df.columns and col2 in df.columns:
+            df[new_col] = df[col1].astype(float) * df[col2].astype(float)
+    return df
+
+
 def create_try_dir(output_dir):
     pattern = re.compile(r"^Try_(\d+)$")
     existing = []
@@ -1001,6 +1012,7 @@ def main():
     output_dashboard_png = try_dir / "sampling_selection_dashboard_1page.png"
 
     df = load_labeled_data(config.INPUT_CSV)
+    df = add_interaction_terms(df, getattr(config, "INTERACTION_TERMS", []))
     validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
     validate_passfail_labels(df, config.TPNoTP_COL, config.PASS_LABEL, config.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(config.DISCRETE_LEVELS, config.DISCRETE_COLS, config.S_PREFIX)
@@ -1028,7 +1040,8 @@ def main():
         print(f"[INFO] Saved GP vs MLP CV comparison chart: {output_model_compare_cv_png}")
     print("[INFO] Model selection report:"); print(json.dumps(selection_report, indent=2, ensure_ascii=False))
     print(f"[INFO] Selected model kind: {getattr(selected_model, 'kind', 'gp')}")
-    pool = generate_candidate_pool(valid_combos, config.CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
+    pool = generate_candidate_pool(valid_combos, config.BASE_CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
+    pool = add_interaction_terms(pool, getattr(config, "INTERACTION_TERMS", []))
     print(f"[INFO] Candidate pool size after exclusion filter: {len(pool)}")
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
     effective_boundary_weights = make_effective_boundary_weights(config, getattr(selected_model, "kind", "gp"), df)
@@ -1105,6 +1118,7 @@ def main():
     if final_test_csv and Path(final_test_csv).exists():
         print(f"[INFO] Loading holdout test set: {final_test_csv}")
         holdout_df = load_labeled_data(final_test_csv)
+        holdout_df = add_interaction_terms(holdout_df, getattr(config, "INTERACTION_TERMS", []))
         try:
             validate_required_columns(holdout_df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, [], [])
             holdout_df = attach_discrete_combo_id(holdout_df, valid_combos, config.DISCRETE_COLS)

@@ -1,0 +1,16 @@
+{
+  "current_bucket_ratio": {
+    "boundary": 0.7899628252788105,
+    "notp_high_tmax": 0.17286245353159854,
+    "uncertainty_sparse": 0.018587360594795543,
+    "random_check": 0.018587360594795543
+  },
+  "recommended_bucket_ratio": {
+    "boundary": 0.7877372479240806,
+    "notp_high_tmax": 0.17237544483985764,
+    "uncertainty_sparse": 0.01994365361803084,
+    "random_check": 0.01994365361803084
+  },
+  "decision": "stable_improving",
+  "reason": "decision=stable_improving; f1_delta=0.0010; recall_delta=0.0222; rmse_delta_pct=2.24; unc_high=0.292"
+}

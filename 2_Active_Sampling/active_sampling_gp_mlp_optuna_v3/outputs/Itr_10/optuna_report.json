@@ -1,0 +1,55 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": true,
+    "mlp_optuna_eligible": true,
+    "n_total": 364,
+    "n_notp": 173,
+    "n_tp": 191
+  },
+  "gp": {
+    "best_value": 0.7950828038629967,
+    "n_trials": 30,
+    "best_params": {
+      "kernel": "Matern32",
+      "constant": 1.5751320499779735,
+      "length_scale": 0.8066708658064159
+    }
+  },
+  "mlp": {
+    "best_value": 0.7343199751919716,
+    "n_trials": 20,
+    "best_params": {
+      "n_layers": 3,
+      "width": 256,
+      "dropout": 0.2939582228666981,
+      "learning_rate": 0.0011417934811629143,
+      "weight_decay": 4.264634863702691e-06,
+      "tmax_loss_weight": 0.6119763312167545
+    },
+    "gate": {
+      "min_tp_recall": 0.2,
+      "min_tp_f1": 0.15,
+      "max_tmax_rmse": null,
+      "min_tmax_r2": null,
+      "tmax_tiebreak_weight": 0.01,
+      "trials_total": 20,
+      "trials_passed_gate": 20,
+      "trials_failed_gate": 0
+    }
+  },
+  "tmax": {
+    "best_value_rmse": 2.0839982757948277,
+    "n_trials": 25,
+    "best_params": {
+      "kernel": "Matern52",
+      "constant": 0.15147749198726185,
+      "length_scale": 1.3062829597010435,
+      "noise_level": 1.0479943310350623e-05,
+      "alpha": 4.687022870017955e-09,
+      "normalize_y": true
+    },
+    "objective": "minimize_noTP_tmax_rmse"
+  }
+}
