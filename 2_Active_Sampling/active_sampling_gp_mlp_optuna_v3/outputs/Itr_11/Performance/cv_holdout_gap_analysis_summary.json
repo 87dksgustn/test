@@ -1,0 +1,37 @@
+{
+  "best_cv_threshold": 0.36,
+  "cv_group_combo_recall_mean": 0.7821748847358603,
+  "cv_group_combo_f1_mean": 0.7925380336858597,
+  "holdout_base": {
+    "accuracy": 0.95,
+    "precision": 0.9545454545454546,
+    "recall": 0.9333333333333333,
+    "f1": 0.9438202247191011,
+    "tn": 53,
+    "fp": 2,
+    "fn": 3,
+    "tp": 42,
+    "n": 100,
+    "setting": "base_0.50",
+    "threshold": 0.5
+  },
+  "holdout_tuned": {
+    "accuracy": 0.95,
+    "precision": 0.9,
+    "recall": 1.0,
+    "f1": 0.9473684210526315,
+    "tn": 50,
+    "fp": 5,
+    "fn": 0,
+    "tp": 45,
+    "n": 100,
+    "setting": "tuned_cv",
+    "threshold": 0.36
+  },
+  "files": {
+    "cv_group_combo_metrics": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3\\outputs\\Itr_11\\Performance\\cv_group_combo_metrics.csv",
+    "cv_threshold_sweep": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3\\outputs\\Itr_11\\Performance\\cv_threshold_sweep.csv",
+    "holdout_threshold_comparison": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3\\outputs\\Itr_11\\Performance\\holdout_threshold_comparison.csv",
+    "holdout_boundary_subset_report": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3\\outputs\\Itr_11\\Performance\\holdout_boundary_subset_report.csv"
+  }
+}

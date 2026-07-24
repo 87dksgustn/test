@@ -1,0 +1,6 @@
+{
+  "current_batch_size": 23,
+  "recommended_batch_size": 18,
+  "decision": "decrease",
+  "reason": "Performance degrading (recall_deg=False, f1_deg=False, rmse_deg=True)."
+}

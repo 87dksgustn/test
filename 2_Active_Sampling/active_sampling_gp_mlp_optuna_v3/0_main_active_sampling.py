@@ -1091,9 +1091,14 @@ def main():
         bucket_bin_quota_rules,
         getattr(config, "BUCKET_PTP_BOUNDS", {}),
     )
-    front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + config.CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"]
+    # Column order: base continuous first, interaction terms at the very end
+    base_cont = getattr(config, "BASE_CONTINUOUS_COLS", config.CONTINUOUS_COLS)
+    interaction_cols = [t[2] for t in getattr(config, "INTERACTION_TERMS", [])]
+    front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + list(base_cont) + config.DISCRETE_COLS + ["discrete_combo_id"]
     score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]
-    selected = selected[front + score_cols]
+    # Only include interaction columns that exist in the dataframe
+    interaction_cols = [c for c in interaction_cols if c in selected.columns]
+    selected = selected[front + score_cols + interaction_cols]
     selected.to_csv(output_candidates_csv, index=False, encoding="utf-8-sig")
     print(f"[INFO] Saved next sampling candidates: {output_candidates_csv}")
     print(selected[["sampling_rank", "selected_bucket", "selected_model_kind", "discrete_combo_id", "p_tp", "p_notp", "tmax_pred_given_notp"]].head(20))
