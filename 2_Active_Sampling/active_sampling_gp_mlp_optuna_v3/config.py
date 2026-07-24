@@ -81,6 +81,18 @@ BUCKET_RATIO = {
     "random_check": 0.03,
 }
 
+# === Combo Reinforcement Sampling ===
+# Automatically add extra samples for underrepresented or misclassified combos
+ENABLE_COMBO_REINFORCE = True
+# Number of extra samples per lacking combo (combo with 0 samples in current batch)
+REINFORCE_LACKING_COMBO_COUNT = 3
+# Number of extra samples per misclassified combo (from holdout evaluation)
+REINFORCE_MISCLASS_COMBO_COUNT = 3
+# Maximum total reinforce samples (to prevent over-sampling)
+REINFORCE_MAX_TOTAL = 15
+# Score to use for selecting reinforce samples: "acq_boundary" or "acq_uncertainty_sparse"
+REINFORCE_SCORE_COL = "acq_boundary"
+
 BOUNDARY_WEIGHTS_GP = {
     "boundary": 0.70,
     "clf_uncertainty": 0.00,

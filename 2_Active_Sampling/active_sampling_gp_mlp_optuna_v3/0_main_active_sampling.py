@@ -42,6 +42,102 @@ def add_interaction_terms(df, interaction_terms):
     return df
 
 
+def reinforce_combo_sampling(
+    selected: pd.DataFrame,
+    scored_pool: pd.DataFrame,
+    valid_combos: list,
+    misclassified_combos: list = None,
+    lacking_combo_count: int = 3,
+    misclass_combo_count: int = 3,
+    max_total: int = 15,
+    score_col: str = "acq_boundary",
+) -> pd.DataFrame:
+    """
+    Add reinforcement samples for lacking or misclassified combos.
+    
+    Args:
+        selected: Current batch selection
+        scored_pool: Full scored candidate pool
+        valid_combos: List of valid combo IDs
+        misclassified_combos: List of combo IDs with misclassification (from holdout)
+        lacking_combo_count: Samples to add per lacking combo (0 samples in batch)
+        misclass_combo_count: Samples to add per misclassified combo
+        max_total: Maximum total reinforcement samples
+        score_col: Score column to rank candidates
+    
+    Returns:
+        Combined DataFrame with original + reinforcement samples
+    """
+    if misclassified_combos is None:
+        misclassified_combos = []
+    
+    # Identify lacking combos (0 samples in current batch)
+    current_combos = set(selected["discrete_combo_id"].unique())
+    all_combos = set(c["combo_id"] for c in valid_combos)
+    lacking_combos = list(all_combos - current_combos)
+    
+    print(f"[INFO] Combo reinforcement: lacking={len(lacking_combos)}, misclassified={len(misclassified_combos)}")
+    
+    # Build exclusion set (already selected samples)
+    selected_keys = set(zip(
+        selected["A_Cell_D"].round(6), 
+        selected["C_Barrier_Thx"].round(6), 
+        selected["discrete_combo_id"]
+    ))
+    
+    def is_already_selected(row):
+        key = (round(row["A_Cell_D"], 6), round(row["C_Barrier_Thx"], 6), row["discrete_combo_id"])
+        return key in selected_keys
+    
+    available_pool = scored_pool[~scored_pool.apply(is_already_selected, axis=1)].copy()
+    
+    additions = []
+    total_added = 0
+    
+    # 1. Add samples for lacking combos
+    for combo_id in lacking_combos:
+        if total_added >= max_total:
+            break
+        combo_pool = available_pool[available_pool["discrete_combo_id"] == combo_id]
+        n_add = min(lacking_combo_count, max_total - total_added, len(combo_pool))
+        if n_add > 0:
+            top_n = combo_pool.nlargest(n_add, score_col).copy()
+            top_n["selected_bucket"] = "combo_reinforce_lacking"
+            additions.append(top_n)
+            total_added += n_add
+            # Update available pool
+            available_pool = available_pool[~available_pool.index.isin(top_n.index)]
+    
+    # 2. Add samples for misclassified combos
+    for combo_id in misclassified_combos:
+        if total_added >= max_total:
+            break
+        # Misclassified combos may already have some samples, add more
+        combo_pool = available_pool[available_pool["discrete_combo_id"] == combo_id]
+        n_add = min(misclass_combo_count, max_total - total_added, len(combo_pool))
+        if n_add > 0:
+            top_n = combo_pool.nlargest(n_add, score_col).copy()
+            top_n["selected_bucket"] = "combo_reinforce_misclass"
+            additions.append(top_n)
+            total_added += n_add
+            available_pool = available_pool[~available_pool.index.isin(top_n.index)]
+    
+    if additions:
+        reinforce_df = pd.concat(additions, ignore_index=True)
+        print(f"[INFO] Added {len(reinforce_df)} reinforcement samples:")
+        print(f"  - Lacking combos: {reinforce_df['selected_bucket'].eq('combo_reinforce_lacking').sum()}")
+        print(f"  - Misclass combos: {reinforce_df['selected_bucket'].eq('combo_reinforce_misclass').sum()}")
+        print(f"  - By combo: {reinforce_df['discrete_combo_id'].value_counts().to_dict()}")
+        
+        # Combine and re-rank
+        combined = pd.concat([selected, reinforce_df], ignore_index=True)
+        combined["sampling_rank"] = range(1, len(combined) + 1)
+        return combined
+    else:
+        print("[INFO] No reinforcement samples needed.")
+        return selected
+
+
 def create_try_dir(output_dir):
     pattern = re.compile(r"^Try_(\d+)$")
     existing = []
@@ -1091,6 +1187,40 @@ def main():
         bucket_bin_quota_rules,
         getattr(config, "BUCKET_PTP_BOUNDS", {}),
     )
+
+    # === Combo Reinforcement Sampling ===
+    if getattr(config, "ENABLE_COMBO_REINFORCE", False):
+        print("[INFO] Combo reinforcement sampling enabled.")
+        
+        # Find previous iteration's misclassified combos
+        misclassified_combos = []
+        prev_itr_dirs = sorted(
+            [d for d in config.OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("Itr_")],
+            key=lambda x: int(x.name.split("_")[1]) if x.name.split("_")[1].isdigit() else 0,
+            reverse=True
+        )
+        if prev_itr_dirs:
+            prev_misclass_csv = prev_itr_dirs[0] / "Performance" / "holdout_misclassified_samples.csv"
+            if prev_misclass_csv.exists():
+                try:
+                    prev_misclass_df = pd.read_csv(prev_misclass_csv)
+                    if "discrete_combo_id" in prev_misclass_df.columns:
+                        misclassified_combos = prev_misclass_df["discrete_combo_id"].unique().tolist()
+                        print(f"[INFO] Found {len(misclassified_combos)} misclassified combos from {prev_misclass_csv.parent.parent.name}")
+                except Exception as e:
+                    print(f"[WARN] Could not read previous misclassified samples: {e}")
+        
+        selected = reinforce_combo_sampling(
+            selected=selected,
+            scored_pool=scored,
+            valid_combos=valid_combos,
+            misclassified_combos=misclassified_combos,
+            lacking_combo_count=getattr(config, "REINFORCE_LACKING_COMBO_COUNT", 3),
+            misclass_combo_count=getattr(config, "REINFORCE_MISCLASS_COMBO_COUNT", 3),
+            max_total=getattr(config, "REINFORCE_MAX_TOTAL", 15),
+            score_col=getattr(config, "REINFORCE_SCORE_COL", "acq_boundary"),
+        )
+    
     # Column order: base continuous first, interaction terms at the very end
     base_cont = getattr(config, "BASE_CONTINUOUS_COLS", config.CONTINUOUS_COLS)
     interaction_cols = [t[2] for t in getattr(config, "INTERACTION_TERMS", [])]
