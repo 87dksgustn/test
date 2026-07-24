@@ -59,6 +59,7 @@ def evaluate_holdout_model(model_kind, x_train, y_class, y_tmax, y_extra, config
             clf_ensemble_size=getattr(config, "GP_CLF_ENSEMBLE_SIZE", 5),
             clf_ensemble_sample_ratio=getattr(config, "GP_CLF_ENSEMBLE_SAMPLE_RATIO", 0.8),
             clf_ensemble_stratified=getattr(config, "GP_CLF_ENSEMBLE_STRATIFIED", True),
+            use_ard=getattr(config, "GP_USE_ARD", True),
         )
     else:
         if not TORCH_AVAILABLE:
@@ -85,7 +86,7 @@ def select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_pa
     gp_params = tuned_params.get("gp_params")
     tmax_params = tuned_params.get("tmax_params")
     mlp_params = tuned_params.get("mlp_params")
-    gp_cv = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=gp_params, random_state=config.RANDOM_SEED)
+    gp_cv = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=gp_params, random_state=config.RANDOM_SEED, use_ard=getattr(config, "GP_USE_ARD", True))
     gp_models = fit_gp_models(
         x_train,
         y_class,
@@ -98,6 +99,7 @@ def select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_pa
         clf_ensemble_size=getattr(config, "GP_CLF_ENSEMBLE_SIZE", 5),
         clf_ensemble_sample_ratio=getattr(config, "GP_CLF_ENSEMBLE_SAMPLE_RATIO", 0.8),
         clf_ensemble_stratified=getattr(config, "GP_CLF_ENSEMBLE_STRATIFIED", True),
+        use_ard=getattr(config, "GP_USE_ARD", True),
     )
     gp_score = gp_cv["summary"].get("stable_score", weighted_score(gp_cv["summary"], config.MODEL_SELECTION_WEIGHTS))
     report = {

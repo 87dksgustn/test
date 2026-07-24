@@ -127,6 +127,7 @@ def fit_surrogate_models(df, cfg):
         clf_ensemble_size=getattr(cfg, "GP_CLF_ENSEMBLE_SIZE", 5),
         clf_ensemble_sample_ratio=getattr(cfg, "GP_CLF_ENSEMBLE_SAMPLE_RATIO", 0.8),
         clf_ensemble_stratified=getattr(cfg, "GP_CLF_ENSEMBLE_STRATIFIED", True),
+        use_ard=getattr(cfg, "GP_USE_ARD", True),
     )
     return pre, x_train, nn_model, models, tuned
 

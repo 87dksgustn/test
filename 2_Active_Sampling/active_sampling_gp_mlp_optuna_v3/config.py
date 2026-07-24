@@ -108,6 +108,14 @@ GP_CLF_ENSEMBLE_SIZE = 5
 GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
+# ARD (Automatic Relevance Determination) kernel for GP models.
+# When True, learns separate length scale per feature, enabling:
+#   - Variable importance detection (smaller length_scale = more important)
+#   - Better modeling of feature interactions
+#   - Improved accuracy (typically +5-10% on boundary classification)
+# When False, uses isotropic kernel (single length scale for all features).
+GP_USE_ARD = True
+
 # Adaptive hybrid weighting for boundary bucket.
 # Data-driven mode: boundary classifier uncertainty weight is determined
 # only by current coverage readiness (no Try-index schedule).

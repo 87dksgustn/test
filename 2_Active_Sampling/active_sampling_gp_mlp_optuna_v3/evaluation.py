@@ -4,7 +4,12 @@ from sklearn.model_selection import StratifiedKFold
 from metrics_utils import classification_metrics, regression_metrics, stable_metric_summary
 from models_gp import fit_gpc_passfail, fit_gpr_tmax_given_pass
 
-def evaluate_gpc_cv(x_transformed, y_class, y_tmax=None, pass_label=0, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, random_state=42):
+def evaluate_gpc_cv(x_transformed, y_class, y_tmax=None, pass_label=0, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, random_state=42, use_ard=True):
+    \"\"\"Evaluate GP classifier with cross-validation.
+    
+    Args:
+        use_ard: If True, use ARD kernel (per-feature length scales).
+    \"\"\"
     unique, counts = np.unique(y_class, return_counts=True)
     if len(unique) < 2:
         return {"summary": {"error": "Only one class is present."}, "fold_metrics": []}
@@ -12,13 +17,13 @@ def evaluate_gpc_cv(x_transformed, y_class, y_tmax=None, pass_label=0, tp_label=
     cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=random_state)
     fold_metrics = []
     for fold, (tr, va) in enumerate(cv.split(x_transformed, y_class)):
-        clf = fit_gpc_passfail(x_transformed[tr], y_class[tr], random_state=random_state + fold, params=params)
+        clf = fit_gpc_passfail(x_transformed[tr], y_class[tr], random_state=random_state + fold, params=params, use_ard=use_ard)
         pred = clf.predict(x_transformed[va])
         m = classification_metrics(y_class[va], pred, tp_label=tp_label)
         if y_tmax is not None:
             reg, has = fit_gpr_tmax_given_pass(
                 x_transformed[tr], y_tmax[tr], y_class[tr],
-                pass_label=pass_label, min_pass_samples=4, random_state=random_state + fold, params=None
+                pass_label=pass_label, min_pass_samples=4, random_state=random_state + fold, params=None, use_ard=use_ard
             )
             pass_mask = (y_class[va] == pass_label)
             if has and int(pass_mask.sum()) > 0:
