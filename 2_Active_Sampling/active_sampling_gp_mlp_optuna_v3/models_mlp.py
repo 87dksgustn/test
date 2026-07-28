@@ -43,13 +43,15 @@ else:
 
 class MLPEnsemble:
     kind = "mlp"
-    def __init__(self, models, tmax_scaler, extra_scaler, device, params=None):
+    def __init__(self, models, tmax_scaler, extra_scaler, device, params=None, extra_cols=None):
         self.models = models
         self.tmax_scaler = tmax_scaler
         self.extra_scaler = extra_scaler
         self.device = device
         self.params = params or {}
         self.has_tmax_model = True
+        self.extra_cols = extra_cols or []  # Names of extra output columns
+        self.n_extra = len(self.extra_cols)
 
 def _check_torch():
     if not TORCH_AVAILABLE:
@@ -160,7 +162,7 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
     model.eval()
     return model, tsc, esc, device
 
-def fit_mlp_ensemble(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None):
+def fit_mlp_ensemble(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None, extra_cols=None):
     models = []; tsc = esc = None; device = "cpu"
     n = int(params.get("ensemble_size", config.MLP_ENSEMBLE_SIZE)) if params else config.MLP_ENSEMBLE_SIZE
     use_bootstrap = bool(params.get("bootstrap", config.MLP_ENSEMBLE_BOOTSTRAP)) if params else bool(config.MLP_ENSEMBLE_BOOTSTRAP)
@@ -178,31 +180,57 @@ def fit_mlp_ensemble(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
         else:
             model, tsc, esc, device = train_single_mlp(x_train, y_class, y_tmax, y_extra, config, member_seed, params=params)
         models.append(model)
-    return MLPEnsemble(models, tsc, esc, device, params=params)
+    return MLPEnsemble(models, tsc, esc, device, params=params, extra_cols=extra_cols)
 
 def predict_mlp_ensemble(bundle, x):
     _check_torch(); device = bundle.device
     xt = torch.tensor(x, dtype=torch.float32).to(device)
-    ps = []; ts = []
+    ps = []; ts = []; es = []
     for model in bundle.models:
         model.eval()
         with torch.no_grad():
-            logits, tscaled, _ = model(xt)
+            logits, tscaled, extra_out = model(xt)
             prob = torch.softmax(logits, dim=1).detach().cpu().numpy()
-            ps.append(prob[:,1]); ts.append(bundle.tmax_scaler.inverse_transform(tscaled.detach().cpu().numpy()))
+            ps.append(prob[:,1])
+            ts.append(bundle.tmax_scaler.inverse_transform(tscaled.detach().cpu().numpy()))
+            # Collect extra outputs if available
+            if extra_out is not None:
+                es.append(extra_out.detach().cpu().numpy())
     p = np.vstack(ps); t = np.vstack(ts)
-    return {"p_tp": p.mean(axis=0), "p_notp": 1-p.mean(axis=0), "p_tp_std": p.std(axis=0), "tmax_pred": t.mean(axis=0), "tmax_std": t.std(axis=0)}
+    result = {
+        "p_tp": p.mean(axis=0),
+        "p_notp": 1-p.mean(axis=0),
+        "p_tp_std": p.std(axis=0),
+        "tmax_pred": t.mean(axis=0),
+        "tmax_std": t.std(axis=0),
+    }
+    # Add extra outputs if available
+    if es and bundle.extra_scaler is not None:
+        e = np.stack(es, axis=0)  # (n_models, n_samples, n_extra)
+        e_mean = e.mean(axis=0)   # (n_samples, n_extra)
+        e_std = e.std(axis=0)
+        # Inverse transform: y = scaled * std + mean
+        e_mean_inv = e_mean * bundle.extra_scaler["std"] + bundle.extra_scaler["mean"]
+        e_std_inv = e_std * bundle.extra_scaler["std"]  # Scale std by same factor
+        result["extra_pred"] = e_mean_inv  # (n_samples, n_extra)
+        result["extra_std"] = e_std_inv
+        result["extra_cols"] = bundle.extra_cols
+    return result
 
-def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None):
+def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, extra_cols=None):
+    """Evaluate MLP with cross-validation, including extra outputs."""
     _check_torch()
     unique, counts = np.unique(y_class, return_counts=True)
-    if len(unique) < 2: return {"summary": {"error": "Only one class is present."}, "fold_metrics": []}
+    if len(unique) < 2: return {"summary": {"error": "Only one class is present."}, "fold_metrics": [], "extra_fold_metrics": {}, "extra_summary": {}}
     splits = max(2, min(n_splits, int(counts.min())))
     cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=config.RANDOM_SEED)
     fold_metrics = []
+    extra_cols = extra_cols or []
+    extra_fold_metrics = {col: [] for col in extra_cols}
+    
     for fold, (tr, va) in enumerate(cv.split(x_transformed, y_class)):
         model, tsc, esc, device = train_single_mlp(x_transformed[tr], y_class[tr], y_tmax[tr], None if y_extra is None else y_extra[tr], config, seed=config.RANDOM_SEED + fold*101, params=params, max_epochs=config.MLP_CV_MAX_EPOCHS)
-        bundle = MLPEnsemble([model], tsc, esc, device, params=params)
+        bundle = MLPEnsemble([model], tsc, esc, device, params=params, extra_cols=extra_cols)
         pred = predict_mlp_ensemble(bundle, x_transformed[va])
         ypred = (pred["p_tp"] >= 0.5).astype(int)
         m = classification_metrics(y_class[va], ypred, tp_label=tp_label)
@@ -212,8 +240,53 @@ def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1,
         else:
             m.update({"tmax_mae": np.nan, "tmax_rmse": np.nan, "tmax_r2": np.nan})
         m["tmax_eval_n"] = int(pass_mask.sum())
+        
+        # Extra outputs evaluation
+        if y_extra is not None and extra_cols and int(pass_mask.sum()) > 0:
+            extra_pred = pred.get("extra_pred")
+            if extra_pred is not None:
+                for i, col in enumerate(extra_cols):
+                    try:
+                        epred_col = extra_pred[pass_mask, i]
+                        etrue_col = y_extra[va][pass_mask, i]
+                        emetrics = regression_metrics(etrue_col, epred_col)
+                        extra_fold_metrics[col].append({
+                            "fold": fold,
+                            "rmse": float(emetrics.get("tmax_rmse", np.nan)),
+                            "mae": float(emetrics.get("tmax_mae", np.nan)),
+                            "r2": float(emetrics.get("tmax_r2", np.nan)),
+                            "n_samples": int(pass_mask.sum()),
+                        })
+                    except Exception:
+                        extra_fold_metrics[col].append({
+                            "fold": fold, "rmse": np.nan, "mae": np.nan, "r2": np.nan, "n_samples": 0
+                        })
+        
         m["model"] = "mlp"; m["fold"] = fold
         fold_metrics.append(m)
+    
     summary = stable_metric_summary(fold_metrics, weights or {"tp_recall":0.7,"tp_f1":0.3}, std_penalty)
     summary["cv_splits"] = splits
-    return {"summary": summary, "fold_metrics": fold_metrics}
+    
+    # Summarize extra outputs CV
+    extra_summary = {}
+    for col, folds in extra_fold_metrics.items():
+        if folds:
+            rmses = [f["rmse"] for f in folds if np.isfinite(f["rmse"])]
+            maes = [f["mae"] for f in folds if np.isfinite(f["mae"])]
+            r2s = [f["r2"] for f in folds if np.isfinite(f["r2"])]
+            extra_summary[col] = {
+                "rmse_mean": float(np.mean(rmses)) if rmses else np.nan,
+                "rmse_std": float(np.std(rmses)) if rmses else np.nan,
+                "mae_mean": float(np.mean(maes)) if maes else np.nan,
+                "r2_mean": float(np.mean(r2s)) if r2s else np.nan,
+                "r2_std": float(np.std(r2s)) if r2s else np.nan,
+                "n_folds": len(rmses),
+            }
+    
+    return {
+        "summary": summary,
+        "fold_metrics": fold_metrics,
+        "extra_fold_metrics": extra_fold_metrics,
+        "extra_summary": extra_summary,
+    }

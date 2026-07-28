@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_11_dataset.csv"
+INPUT_CSV = "Itr_15_dataset.csv"
 FINAL_TEST_CSV = "Final_test_Dataset.csv"
 
 # Base continuous columns (original features)
@@ -26,10 +26,15 @@ PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
 TMAX_COL = "MaxT_Adj"        # Valid mainly for NoTP cases
 
-# Optional extra outputs. They can be trained by MLP multi-head,
-# but are not used as a separate sampling bucket by default.
-OTHER_REGRESSION_COLS = []
+# Extra regression outputs (evaluation-only, not used for sampling decisions).
+# These are trained/evaluated on NoTP rows only, same as TMAX_COL.
+OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power"]
 TIME_FEATURE_COLS = []
+
+# Extra outputs policy flags
+EXTRA_OUTPUTS_USE_NOTP_ONLY = True   # Train/evaluate on NoTP rows only
+EXTRA_OUTPUTS_AFFECT_SAMPLING = False  # Do NOT use for acquisition scores
+EXTRA_OUTPUTS_AFFECT_MODEL_SELECTION = False  # Do NOT use for GP/MLP decision
 
 TP_LABEL = 1
 NOTP_LABEL = 0
@@ -75,8 +80,8 @@ MIN_SAMPLES_PER_COMBO = 8
 MAX_SAMPLES_PER_COMBO = 40
 
 BUCKET_RATIO = {
-    "boundary": 0.75,
-    "notp_high_tmax": 0.15,
+    "boundary": 0.70,
+    "notp_high_tmax": 0.20,  # Increased for Tmax R2 recovery
     "uncertainty_sparse": 0.07,
     "random_check": 0.03,
 }
@@ -104,7 +109,7 @@ BOUNDARY_WEIGHTS_GP = {
 # - "none": keep legacy behavior (clf_uncertainty=0 for GP path)
 # - "ensemble_std": train bootstrap GP classifiers and use std of p_tp
 GP_CLF_UNCERTAINTY_MODE = "ensemble_std"
-GP_CLF_ENSEMBLE_SIZE = 5
+GP_CLF_ENSEMBLE_SIZE = 1  # Reduced for speed with ARD; increase to 5 for production
 GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
@@ -114,7 +119,16 @@ GP_CLF_ENSEMBLE_STRATIFIED = True
 #   - Better modeling of feature interactions
 #   - Improved accuracy (typically +5-10% on boundary classification)
 # When False, uses isotropic kernel (single length scale for all features).
-GP_USE_ARD = True
+GP_USE_ARD = True  # Enabled for production; final model uses per-feature length scales
+
+# Use ARD during Optuna objectives.
+# Set False to speed up each trial significantly while keeping ARD for final fit.
+GP_OPTUNA_USE_ARD = False  # Keep False for speed
+TMAX_OPTUNA_USE_ARD = False  # Keep False for speed
+
+# Use ARD during model selection CV and holdout evaluation.
+# Set False to speed up model comparison while keeping ARD for final fit only.
+GP_MODEL_SELECTION_USE_ARD = False  # Keep False for speed
 
 # Adaptive hybrid weighting for boundary bucket.
 # Data-driven mode: boundary classifier uncertainty weight is determined
@@ -211,10 +225,32 @@ HYBRID_NOTP_HIGHTMAX_ZONE_RATIO = {
 # ============================================================
 # Model selection
 # ============================================================
-# "gp"   : force GP
-# "mlp"  : force MLP if eligible, otherwise fallback to GP
-# "auto" : compare GP and MLP if MLP is eligible
-MODEL_MODE = "auto"
+# "gp"     : force GP
+# "mlp"    : force MLP if eligible, otherwise fallback to GP
+# "auto"   : compare GP and MLP if MLP is eligible (winner-takes-all)
+# "hybrid" : select best model per task (classifier, tmax, each extra output)
+MODEL_MODE = "hybrid"
+
+# ============================================================
+# Hybrid model selection (when MODEL_MODE = "hybrid")
+# ============================================================
+# Enable hybrid mode: classifier, tmax, and each extra output are selected independently
+HYBRID_ENABLED = True  # Only effective when MODEL_MODE = "hybrid"
+
+# Selection criteria for each task in hybrid mode
+# For classification: weighted sum of tp_recall and tp_f1 (excluding tmax weight)
+HYBRID_CLASSIFIER_WEIGHTS = {
+    "tp_recall": 0.70,
+    "tp_f1": 0.30,
+}  # Weighted sum score for classifier selection
+
+# For regression: "rmse", "r2", "mae"
+HYBRID_TMAX_METRIC = "r2"           # Metric to compare GP vs MLP tmax regressor (higher is better)
+HYBRID_EXTRA_METRIC = "rmse"        # Metric to compare GP vs MLP for each extra output (lower is better)
+
+# Margin: only switch to MLP if improvement exceeds this threshold
+HYBRID_CLASSIFIER_MARGIN = 0.01    # Weighted score improvement required
+HYBRID_REGRESSION_MARGIN = 0.02    # Relative RMSE improvement required (2%)
 
 MLP_MIN_TOTAL_SAMPLES = 350
 MLP_MIN_CLASS_RATIO = 0.30
@@ -223,10 +259,19 @@ MLP_MIN_FAIL_SAMPLES = int(MLP_MIN_TOTAL_SAMPLES * MLP_MIN_CLASS_RATIO)
 MLP_MIN_SAMPLES_PER_COMBO = 8
 
 MODEL_SELECTION_WEIGHTS = {
-    "tp_recall": 0.70,
-    "tp_f1": 0.30,
+    "tp_recall": 0.50,
+    "tp_f1": 0.20,
+    "tmax_r2": 0.30,  # Tmax regression performance (prevents MLP selection when R2 drops)
 }
 MLP_SELECTION_MARGIN = 0.01
+
+# Conditional MLP selection constraints (safety guards)
+# Even if MLP wins composite score, reject MLP if these constraints are violated:
+MLP_VETO_ENABLED = False  # Disabled: rely on weighted score with tmax_r2 instead
+# Veto MLP if holdout R2 drops more than this threshold vs GP
+MLP_VETO_R2_DROP_THRESHOLD = 0.005  # 0.5% drop = veto MLP
+# Veto MLP if holdout R2 is below this absolute minimum
+MLP_VETO_R2_MIN_ABSOLUTE = 0.990
 
 # Model comparison summary score (for GP vs MLP report/plot only).
 # composite_score = MODEL_COMPARE_CV_WEIGHT * cv_stable_score + MODEL_COMPARE_HOLDOUT_WEIGHT * holdout_weighted_score
@@ -247,7 +292,7 @@ BATCH_SIZE_STEP_DOWN = 5
 # manual: use configured values, ignore recommendations
 # shadow: use configured values but compute and log recommendations
 # auto: apply recommended values automatically
-BATCH_SIZE_MODE = "auto"
+BATCH_SIZE_MODE = "shadow"  # Changed from auto for stability
 BUCKET_RATIO_MODE = "auto"
 
 # Bucket ratio dynamic adjustment parameters

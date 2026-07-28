@@ -6,13 +6,48 @@ from sklearn.exceptions import ConvergenceWarning
 
 class GPModels:
     kind = "gp"
-    def __init__(self, clf, reg_tmax, has_tmax_model, gp_params=None, tmax_params=None, clf_ensemble=None):
+    def __init__(self, clf, reg_tmax, has_tmax_model, gp_params=None, tmax_params=None, clf_ensemble=None, reg_extra=None, extra_cols=None):
         self.clf = clf
         self.reg_tmax = reg_tmax
         self.has_tmax_model = has_tmax_model
         self.gp_params = gp_params or {}
         self.tmax_params = tmax_params or {}
         self.clf_ensemble = clf_ensemble or []
+        self.reg_extra = reg_extra or {}  # {col_name: gpr} for extra outputs
+        self.extra_cols = extra_cols or []
+
+
+class HybridModels:
+    """Hybrid model bundle: each task (classifier, tmax, extras) can use different model type."""
+    kind = "hybrid"
+    
+    def __init__(self, 
+                 clf_model,           # GP or MLP model for classification
+                 clf_kind,            # "gp" or "mlp"
+                 tmax_model,          # GP or MLP model for tmax regression
+                 tmax_kind,           # "gp" or "mlp"
+                 extra_models,        # {col_name: (model, kind)} for extra outputs
+                 extra_cols,          # List of extra column names
+                 selection_report):   # Dict with per-task selection details
+        self.clf_model = clf_model
+        self.clf_kind = clf_kind
+        self.tmax_model = tmax_model
+        self.tmax_kind = tmax_kind
+        self.extra_models = extra_models or {}  # {col: (model, "gp"|"mlp")}
+        self.extra_cols = extra_cols or []
+        self.selection_report = selection_report or {}
+        self.has_tmax_model = tmax_model is not None
+    
+    def get_selection_summary(self):
+        """Return human-readable selection summary."""
+        lines = []
+        lines.append(f"  classifier: {self.clf_kind.upper()}")
+        lines.append(f"  tmax: {self.tmax_kind.upper()}")
+        for col in self.extra_cols:
+            if col in self.extra_models:
+                _, kind = self.extra_models[col]
+                lines.append(f"  {col}: {kind.upper()}")
+        return "\n".join(lines)
 
 def build_clf_kernel(params=None, n_features=None):
     """Build GP classifier kernel.
@@ -163,6 +198,8 @@ def fit_gp_models(
     clf_ensemble_sample_ratio=0.8,
     clf_ensemble_stratified=True,
     use_ard=True,
+    y_extra=None,
+    extra_cols=None,
 ):
     """Fit GP models for classification and Tmax regression.
     
@@ -170,6 +207,8 @@ def fit_gp_models(
         use_ard: If True, use ARD kernel (Automatic Relevance Determination).
                  This enables per-feature length scale learning for better
                  variable importance detection and interaction modeling.
+        y_extra: 2D array of extra regression targets (shape: n_samples, n_extra)
+        extra_cols: List of extra output column names
     """
     clf = fit_gpc_passfail(x_train, y_class, random_state=random_state, params=gp_params, use_ard=use_ard)
     reg, has = fit_gpr_tmax_given_pass(x_train, y_tmax, y_class, pass_label=pass_label, random_state=random_state, params=tmax_params, use_ard=use_ard)
@@ -185,6 +224,26 @@ def fit_gp_models(
             params=gp_params,
             use_ard=use_ard,
         )
+    # Fit extra GP regressors (NoTP only, same as Tmax)
+    reg_extra = {}
+    if y_extra is not None and extra_cols is not None and len(extra_cols) > 0:
+        mask = y_class == pass_label
+        if int(mask.sum()) >= 8:  # min_pass_samples
+            x_notp = x_train[mask]
+            for i, col in enumerate(extra_cols):
+                y_col = y_extra[mask, i]
+                n_features = x_train.shape[1] if use_ard else None
+                gpr = GaussianProcessRegressor(
+                    kernel=build_tmax_kernel(tmax_params or {}, n_features=n_features),
+                    alpha=float((tmax_params or {}).get("alpha", 1e-8)),
+                    normalize_y=True,
+                    n_restarts_optimizer=int((tmax_params or {}).get("n_restarts_optimizer", 5)),
+                    random_state=random_state + i,
+                )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                    gpr.fit(x_notp, y_col)
+                reg_extra[col] = gpr
     return GPModels(
         clf=clf,
         reg_tmax=reg,
@@ -192,4 +251,6 @@ def fit_gp_models(
         gp_params=gp_params,
         tmax_params=tmax_params,
         clf_ensemble=clf_ensemble,
+        reg_extra=reg_extra,
+        extra_cols=extra_cols or [],
     )

@@ -16,7 +16,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import config
 from data_loader import load_labeled_data, validate_required_columns, validate_passfail_labels
 from discrete_space import generate_valid_discrete_combinations, attach_discrete_combo_id
-from candidate_generator import generate_candidate_pool
+from candidate_generator import generate_candidate_pool, filter_near_existing_data
 from preprocessing import build_preprocessor, make_xy, make_extra_targets
 from diagnostics import combo_diagnostics
 from optuna_tuning import maybe_tune_models
@@ -58,7 +58,7 @@ def reinforce_combo_sampling(
     Args:
         selected: Current batch selection
         scored_pool: Full scored candidate pool
-        valid_combos: List of valid combo IDs
+        valid_combos: DataFrame with 'discrete_combo_id' column
         misclassified_combos: List of combo IDs with misclassification (from holdout)
         lacking_combo_count: Samples to add per lacking combo (0 samples in batch)
         misclass_combo_count: Samples to add per misclassified combo
@@ -73,7 +73,8 @@ def reinforce_combo_sampling(
     
     # Identify lacking combos (0 samples in current batch)
     current_combos = set(selected["discrete_combo_id"].unique())
-    all_combos = set(c["combo_id"] for c in valid_combos)
+    # valid_combos is a DataFrame with 'discrete_combo_id' column
+    all_combos = set(valid_combos["discrete_combo_id"].unique())
     lacking_combos = list(all_combos - current_combos)
     
     print(f"[INFO] Combo reinforcement: lacking={len(lacking_combos)}, misclassified={len(misclassified_combos)}")
@@ -646,6 +647,372 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
     return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
 
 
+def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir):
+    """Save actual vs predicted plots for extra regression outputs.
+    
+    Args:
+        y_extra_true: 2D array (n_samples, n_extra) of actual values
+        y_extra_pred: 2D array (n_samples, n_extra) of predicted values
+        extra_cols: list of column names
+        output_dir: Path to save plots
+    
+    Returns:
+        dict: metrics for each extra output
+    """
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    
+    if y_extra_true is None or y_extra_pred is None or len(extra_cols) == 0:
+        return {}
+    
+    y_extra_true = np.asarray(y_extra_true, dtype=float)
+    y_extra_pred = np.asarray(y_extra_pred, dtype=float)
+    
+    if y_extra_true.shape != y_extra_pred.shape:
+        return {}
+    
+    all_metrics = {}
+    colors = ["#4C78A8", "#F58518", "#54A24B"]  # Blue, Orange, Green
+    
+    for i, col in enumerate(extra_cols):
+        yt = y_extra_true[:, i]
+        yp = y_extra_pred[:, i]
+        
+        # Filter valid values
+        mask = np.isfinite(yt) & np.isfinite(yp)
+        yt_valid = yt[mask]
+        yp_valid = yp[mask]
+        
+        if len(yt_valid) == 0:
+            all_metrics[col] = {"mae": np.nan, "rmse": np.nan, "r2": np.nan, "n": 0}
+            continue
+        
+        mae = mean_absolute_error(yt_valid, yp_valid)
+        rmse = np.sqrt(mean_squared_error(yt_valid, yp_valid))
+        r2 = r2_score(yt_valid, yp_valid) if len(yt_valid) > 1 else np.nan
+        
+        all_metrics[col] = {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt_valid)}
+        
+        # Individual metric values are kept for logging/reporting,
+        # while plotting is consolidated into a single multi-panel figure below.
+    
+    # Create combined 3-panel plot if all three outputs exist
+    if len(extra_cols) >= 3:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=150)
+        for i, col in enumerate(extra_cols[:3]):
+            ax = axes[i]
+            yt = y_extra_true[:, i]
+            yp = y_extra_pred[:, i]
+            mask = np.isfinite(yt) & np.isfinite(yp)
+            yt_valid = yt[mask]
+            yp_valid = yp[mask]
+            
+            if len(yt_valid) == 0:
+                ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(col, fontsize=12, fontweight="bold")
+                continue
+            
+            ax.scatter(yt_valid, yp_valid, s=40, alpha=0.7, edgecolors="black", linewidths=0.3, c=colors[i])
+            data_range = max(yt_valid.max() - yt_valid.min(), yp_valid.max() - yp_valid.min())
+            margin = max(data_range * 0.05, 0.001)
+            lims = [min(yt_valid.min(), yp_valid.min()) - margin, max(yt_valid.max(), yp_valid.max()) + margin]
+            ax.plot(lims, lims, "--", color="#E45756", linewidth=1.2)
+            ax.set_xlim(lims)
+            ax.set_ylim(lims)
+            ax.set_xlabel(f"Actual", fontsize=11)
+            ax.set_ylabel(f"Predicted", fontsize=11)
+            
+            m = all_metrics.get(col, {})
+            r2_val = m.get("r2", np.nan)
+            rmse_val = m.get("rmse", np.nan)
+            ax.set_title(f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.4f}" if abs(rmse_val) < 10 else f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.2f}", fontsize=12, fontweight="bold")
+            ax.grid(True, alpha=0.3)
+        
+        fig.suptitle("Extra Outputs: Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold", y=1.02)
+        fig.tight_layout()
+        combined_png = output_dir / "extra_outputs_actual_vs_pred_holdout.png"
+        fig.savefig(combined_png, dpi=180, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[INFO] Saved combined extra outputs plot: {combined_png}")
+    
+    return all_metrics
+
+
+def save_hybrid_selection_report_plot(selection_report, output_png):
+    """
+    Visualize hybrid model selection results as a bar chart comparing GP vs MLP per task.
+    Shows which model was selected for classifier, tmax, and each extra output.
+    """
+    hybrid_sel = selection_report.get("hybrid_selection")
+    if not hybrid_sel:
+        return False
+    
+    # Collect tasks and their GP/MLP metric values
+    tasks = []
+    gp_vals = []
+    mlp_vals = []
+    winners = []
+    metric_names = []
+    
+    # Classifier
+    clf_info = hybrid_sel.get("classifier", {})
+    tasks.append("Classifier")
+    gp_vals.append(clf_info.get("gp_value", 0))
+    mlp_vals.append(clf_info.get("mlp_value", 0))
+    winners.append(clf_info.get("winner", "gp"))
+    metric_names.append(clf_info.get("metric", "tp_f1"))
+    
+    # Tmax
+    tmax_info = hybrid_sel.get("tmax", {})
+    tasks.append("Tmax")
+    gp_vals.append(tmax_info.get("gp_value", 0))
+    mlp_vals.append(tmax_info.get("mlp_value", 0))
+    winners.append(tmax_info.get("winner", "gp"))
+    metric_names.append(tmax_info.get("metric", "rmse"))
+    
+    # Extra outputs
+    extras = hybrid_sel.get("extras", {})
+    for col, info in extras.items():
+        tasks.append(col)
+        gp_vals.append(info.get("gp_value", 0))
+        mlp_vals.append(info.get("mlp_value", 0))
+        winners.append(info.get("winner", "gp"))
+        metric_names.append(info.get("metric", "rmse"))
+    
+    n_tasks = len(tasks)
+    x = np.arange(n_tasks)
+    width = 0.35
+    
+    fig, ax = plt.subplots(figsize=(max(10, n_tasks * 2), 6), dpi=150)
+    
+    # Create bars
+    bars_gp = ax.bar(x - width/2, gp_vals, width, label="GP", color="#4C78A8", alpha=0.85)
+    bars_mlp = ax.bar(x + width/2, mlp_vals, width, label="MLP", color="#E45756", alpha=0.85)
+    
+    # Mark winners with star
+    for i, (gp_bar, mlp_bar, winner) in enumerate(zip(bars_gp, bars_mlp, winners)):
+        if winner == "gp":
+            bar = gp_bar
+            color = "#4C78A8"
+        else:
+            bar = mlp_bar
+            color = "#E45756"
+        height = bar.get_height()
+        ax.annotate("★",
+                    xy=(bar.get_x() + bar.get_width()/2, height),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha="center", va="bottom",
+                    fontsize=16, color=color, fontweight="bold")
+    
+    ax.set_xlabel("Task", fontsize=12)
+    ax.set_ylabel("Metric Value", fontsize=12)
+    ax.set_title("Hybrid Model Selection: GP vs MLP per Task\n(★ = Selected Model)", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{t}\n({m})" for t, m in zip(tasks, metric_names)], fontsize=10)
+    ax.legend(loc="upper right", fontsize=11)
+    ax.grid(True, alpha=0.3, axis="y")
+    
+    # Add value labels on bars
+    for bar, val in zip(bars_gp, gp_vals):
+        if np.isfinite(val):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f"{val:.4f}" if abs(val) < 10 else f"{val:.2f}",
+                    ha="center", va="bottom", fontsize=8, color="#4C78A8")
+    for bar, val in zip(bars_mlp, mlp_vals):
+        if np.isfinite(val):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f"{val:.4f}" if abs(val) < 10 else f"{val:.2f}",
+                    ha="center", va="bottom", fontsize=8, color="#E45756")
+    
+    fig.tight_layout()
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved hybrid selection plot: {output_png}")
+    return True
+
+
+def save_model_comparison_dashboard(gp_holdout, mlp_holdout, extra_cols, output_png):
+    """
+    Comprehensive dashboard comparing GP vs MLP performance on all outputs.
+    Shows bar charts for classification metrics, tmax metrics, and extra output metrics.
+    """
+    fig = plt.figure(figsize=(16, 10), dpi=150)
+    
+    # Classification metrics subplot
+    ax1 = fig.add_subplot(2, 2, 1)
+    clf_metrics = ["tp_recall", "tp_f1", "accuracy"]
+    gp_clf = [gp_holdout.get(m, 0) for m in clf_metrics]
+    mlp_clf = [mlp_holdout.get(m, 0) for m in clf_metrics]
+    x = np.arange(len(clf_metrics))
+    width = 0.35
+    ax1.bar(x - width/2, gp_clf, width, label="GP", color="#4C78A8")
+    ax1.bar(x + width/2, mlp_clf, width, label="MLP", color="#E45756")
+    ax1.set_ylabel("Score")
+    ax1.set_title("Classification Metrics", fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(clf_metrics)
+    ax1.legend()
+    ax1.set_ylim(0, 1.1)
+    ax1.grid(True, alpha=0.3, axis="y")
+    
+    # Tmax metrics subplot
+    ax2 = fig.add_subplot(2, 2, 2)
+    tmax_metrics = ["tmax_rmse", "tmax_mae"]
+    gp_tmax = [gp_holdout.get(m, 0) for m in tmax_metrics]
+    mlp_tmax = [mlp_holdout.get(m, 0) for m in tmax_metrics]
+    x = np.arange(len(tmax_metrics))
+    ax2.bar(x - width/2, gp_tmax, width, label="GP", color="#4C78A8")
+    ax2.bar(x + width/2, mlp_tmax, width, label="MLP", color="#E45756")
+    ax2.set_ylabel("Value (lower is better)")
+    ax2.set_title("Tmax Regression Metrics", fontweight="bold")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(["RMSE", "MAE"])
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis="y")
+    
+    # Tmax R2 subplot
+    ax3 = fig.add_subplot(2, 2, 3)
+    gp_r2 = gp_holdout.get("tmax_r2", 0)
+    mlp_r2 = mlp_holdout.get("tmax_r2", 0)
+    bars = ax3.bar(["GP", "MLP"], [gp_r2, mlp_r2], color=["#4C78A8", "#E45756"])
+    ax3.set_ylabel("R²")
+    ax3.set_title("Tmax R² Comparison", fontweight="bold")
+    ax3.set_ylim(min(0, min(gp_r2, mlp_r2) - 0.05), 1.05)
+    ax3.grid(True, alpha=0.3, axis="y")
+    for bar, val in zip(bars, [gp_r2, mlp_r2]):
+        ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                 f"{val:.4f}", ha="center", va="bottom", fontsize=10)
+    
+    # Extra outputs RMSE subplot
+    ax4 = fig.add_subplot(2, 2, 4)
+    if extra_cols:
+        gp_extra = gp_holdout.get("extra_metrics", {})
+        mlp_extra = mlp_holdout.get("extra_metrics", {})
+        gp_rmse = [gp_extra.get(c, {}).get("rmse", 0) for c in extra_cols]
+        mlp_rmse = [mlp_extra.get(c, {}).get("rmse", 0) for c in extra_cols]
+        x = np.arange(len(extra_cols))
+        ax4.bar(x - width/2, gp_rmse, width, label="GP", color="#4C78A8")
+        ax4.bar(x + width/2, mlp_rmse, width, label="MLP", color="#E45756")
+        ax4.set_ylabel("RMSE (lower is better)")
+        ax4.set_title("Extra Outputs RMSE", fontweight="bold")
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(extra_cols, rotation=15, ha="right")
+        ax4.legend()
+        ax4.grid(True, alpha=0.3, axis="y")
+    else:
+        ax4.text(0.5, 0.5, "No extra outputs", ha="center", va="center", transform=ax4.transAxes)
+        ax4.set_title("Extra Outputs RMSE", fontweight="bold")
+    
+    fig.suptitle("GP vs MLP Performance Comparison (Holdout)", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved model comparison dashboard: {output_png}")
+    return True
+
+
+def save_cv_vs_holdout_comparison_plot(cv_metrics, holdout_metrics, output_png, title_prefix=""):
+    """
+    Compare CV performance vs Holdout (final test) performance.
+    Shows side-by-side bar charts for classification and regression metrics.
+    
+    Args:
+        cv_metrics: dict with keys like 'tp_recall_mean', 'tp_f1_mean', 'tmax_r2_mean' etc.
+        holdout_metrics: dict with keys like 'tp_recall', 'tp_f1', 'tmax_r2' etc.
+        output_png: Path to save the plot
+        title_prefix: Optional prefix for title (e.g., "GP" or "MLP")
+    """
+    if not cv_metrics or not holdout_metrics:
+        return False
+    
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), dpi=150)
+    width = 0.35
+    
+    # 1. Classification metrics comparison
+    ax1 = axes[0]
+    clf_metrics = ["tp_recall", "tp_f1", "accuracy"]
+    clf_labels = ["TP Recall", "TP F1", "Accuracy"]
+    # Holdout fallback keys (holdout uses 'recall'/'f1', CV uses 'tp_recall'/'tp_f1')
+    holdout_fallback = {"tp_recall": "recall", "tp_f1": "f1", "accuracy": "accuracy"}
+    cv_clf = []
+    holdout_clf = []
+    for m in clf_metrics:
+        cv_val = cv_metrics.get(f"{m}_mean", cv_metrics.get(m, 0))
+        # Try both tp_recall and recall for holdout
+        holdout_val = holdout_metrics.get(m, holdout_metrics.get(holdout_fallback.get(m, m), 0))
+        cv_clf.append(float(cv_val) if np.isfinite(cv_val) else 0)
+        holdout_clf.append(float(holdout_val) if np.isfinite(holdout_val) else 0)
+    
+    x = np.arange(len(clf_metrics))
+    ax1.bar(x - width/2, cv_clf, width, label="CV (5-fold)", color="#4C78A8", alpha=0.8)
+    ax1.bar(x + width/2, holdout_clf, width, label="Holdout", color="#72B7B2", alpha=0.8)
+    ax1.set_ylabel("Score", fontsize=11)
+    ax1.set_title("Classification Metrics", fontweight="bold", fontsize=12)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(clf_labels, fontsize=10)
+    ax1.legend(loc="lower right", fontsize=9)
+    ax1.set_ylim(0, 1.1)
+    ax1.grid(True, alpha=0.3, axis="y")
+    
+    # Add value labels
+    for i, (cv_v, ho_v) in enumerate(zip(cv_clf, holdout_clf)):
+        ax1.text(i - width/2, cv_v + 0.02, f"{cv_v:.3f}", ha="center", va="bottom", fontsize=8, color="#4C78A8")
+        ax1.text(i + width/2, ho_v + 0.02, f"{ho_v:.3f}", ha="center", va="bottom", fontsize=8, color="#72B7B2")
+    
+    # 2. Tmax R2 comparison
+    ax2 = axes[1]
+    cv_r2 = cv_metrics.get("tmax_r2_mean", cv_metrics.get("tmax_r2", 0))
+    # Holdout uses 'r2' instead of 'tmax_r2'
+    holdout_r2 = holdout_metrics.get("tmax_r2", holdout_metrics.get("r2", 0))
+    cv_r2 = float(cv_r2) if np.isfinite(cv_r2) else 0
+    holdout_r2 = float(holdout_r2) if np.isfinite(holdout_r2) else 0
+    
+    bars = ax2.bar(["CV (5-fold)", "Holdout"], [cv_r2, holdout_r2], color=["#4C78A8", "#72B7B2"], alpha=0.8)
+    ax2.set_ylabel("R²", fontsize=11)
+    ax2.set_title("Tmax R² Comparison", fontweight="bold", fontsize=12)
+    ax2.set_ylim(min(0, min(cv_r2, holdout_r2) - 0.02), 1.02)
+    ax2.grid(True, alpha=0.3, axis="y")
+    for bar, val in zip(bars, [cv_r2, holdout_r2]):
+        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                 f"{val:.4f}", ha="center", va="bottom", fontsize=10)
+    
+    # 3. Tmax RMSE/MAE comparison
+    ax3 = axes[2]
+    cv_rmse = cv_metrics.get("tmax_rmse_mean", cv_metrics.get("tmax_rmse", 0))
+    # Holdout uses 'rmse'/'mae' instead of 'tmax_rmse'/'tmax_mae'
+    holdout_rmse = holdout_metrics.get("tmax_rmse", holdout_metrics.get("rmse", 0))
+    cv_mae = cv_metrics.get("tmax_mae_mean", cv_metrics.get("tmax_mae", 0))
+    holdout_mae = holdout_metrics.get("tmax_mae", holdout_metrics.get("mae", 0))
+    
+    cv_rmse = float(cv_rmse) if np.isfinite(cv_rmse) else 0
+    holdout_rmse = float(holdout_rmse) if np.isfinite(holdout_rmse) else 0
+    cv_mae = float(cv_mae) if np.isfinite(cv_mae) else 0
+    holdout_mae = float(holdout_mae) if np.isfinite(holdout_mae) else 0
+    
+    x = np.arange(2)
+    ax3.bar(x - width/2, [cv_rmse, cv_mae], width, label="CV (5-fold)", color="#4C78A8", alpha=0.8)
+    ax3.bar(x + width/2, [holdout_rmse, holdout_mae], width, label="Holdout", color="#72B7B2", alpha=0.8)
+    ax3.set_ylabel("Value (lower is better)", fontsize=11)
+    ax3.set_title("Tmax Error Metrics", fontweight="bold", fontsize=12)
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(["RMSE", "MAE"], fontsize=10)
+    ax3.legend(loc="upper right", fontsize=9)
+    ax3.grid(True, alpha=0.3, axis="y")
+    
+    # Add value labels
+    ax3.text(0 - width/2, cv_rmse + 0.1, f"{cv_rmse:.2f}", ha="center", va="bottom", fontsize=8, color="#4C78A8")
+    ax3.text(0 + width/2, holdout_rmse + 0.1, f"{holdout_rmse:.2f}", ha="center", va="bottom", fontsize=8, color="#72B7B2")
+    ax3.text(1 - width/2, cv_mae + 0.1, f"{cv_mae:.2f}", ha="center", va="bottom", fontsize=8, color="#4C78A8")
+    ax3.text(1 + width/2, holdout_mae + 0.1, f"{holdout_mae:.2f}", ha="center", va="bottom", fontsize=8, color="#72B7B2")
+    
+    fig.suptitle(f"{title_prefix}CV vs Holdout Performance Comparison".strip(), fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved CV vs Holdout comparison plot: {output_png}")
+    return True
+
+
 def collect_iteration_history(output_dir):
     """Scan Itr_n folders and collect iteration_summary.json from each.
     Falls back to model_selection_report.json for older iterations without summary.
@@ -1125,7 +1492,7 @@ def main():
     with open(output_optuna_report_json, "w", encoding="utf-8") as f:
         json.dump(tuned["report"], f, indent=2, ensure_ascii=False)
     print("[INFO] Optuna report:"); print(json.dumps(tuned["report"], indent=2, ensure_ascii=False))
-    selected_model, selection_report, fold_results = select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned)
+    selected_model, selection_report, fold_results = select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned, extra_cols=extra_cols)
     with open(output_model_selection_json, "w", encoding="utf-8") as f:
         json.dump(selection_report, f, indent=2, ensure_ascii=False)
     fold_df = fold_metrics_to_df(fold_results)
@@ -1134,9 +1501,25 @@ def main():
     wrote_model_compare_png = save_model_compare_cv_barplot(selection_report, output_model_compare_cv_png)
     if wrote_model_compare_png:
         print(f"[INFO] Saved GP vs MLP CV comparison chart: {output_model_compare_cv_png}")
+    
+    # Hybrid model selection plots
+    if selection_report.get("hybrid_selection"):
+        output_hybrid_selection_png = try_dir / "hybrid_model_selection.png"
+        save_hybrid_selection_report_plot(selection_report, output_hybrid_selection_png)
+        print(f"[INFO] Hybrid selection: {getattr(selected_model, 'get_selection_summary', lambda: 'N/A')()}")
+    
+    # Model comparison dashboard (GP vs MLP per output)
+    gp_holdout = selection_report.get("gp_holdout_result")
+    mlp_holdout = selection_report.get("mlp_holdout_result")
+    if gp_holdout and mlp_holdout and "error" not in gp_holdout and "error" not in mlp_holdout:
+        output_compare_dashboard_png = try_dir / "model_comparison_dashboard.png"
+        save_model_comparison_dashboard(gp_holdout, mlp_holdout, extra_cols, output_compare_dashboard_png)
+    
     print("[INFO] Model selection report:"); print(json.dumps(selection_report, indent=2, ensure_ascii=False))
     print(f"[INFO] Selected model kind: {getattr(selected_model, 'kind', 'gp')}")
     pool = generate_candidate_pool(valid_combos, config.BASE_CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
+    # Filter out candidates too close to existing labeled data (prevents duplicate sampling)
+    pool = filter_near_existing_data(pool, df, config.BASE_CONTINUOUS_COLS, config.DISCRETE_COLS, min_distance=0.05)
     pool = add_interaction_terms(pool, getattr(config, "INTERACTION_TERMS", []))
     print(f"[INFO] Candidate pool size after exclusion filter: {len(pool)}")
     x_candidate = pre.transform(pool[config.CONTINUOUS_COLS + config.DISCRETE_COLS].copy())
@@ -1325,6 +1708,46 @@ def main():
                 )
                 print(f"[INFO] Saved holdout Tmax plot: {holdout_tmax_png}")
                 print(f"[INFO] Holdout Tmax metrics: {tmax_metrics}")
+                
+                # === CV vs Holdout comparison plot ===
+                # Build holdout metrics dict for comparison
+                holdout_full_metrics = dict(cm_metrics) if cm_metrics else {}
+                holdout_full_metrics.update(tmax_metrics if tmax_metrics else {})
+                
+                # Get CV metrics from selection report
+                cv_metrics_for_plot = None
+                selected_kind = getattr(selected_model, "kind", "gp")
+                if selected_kind == "hybrid":
+                    # For hybrid, use the CV result of the classifier model
+                    cv_metrics_for_plot = selection_report.get("gp_cv_result") if selection_report.get("hybrid_selection", {}).get("classifier", {}).get("winner") == "gp" else selection_report.get("mlp_cv_result")
+                else:
+                    cv_key = f"{selected_kind}_cv_result"
+                    cv_metrics_for_plot = selection_report.get(cv_key, selection_report.get("gp_cv_result"))
+                
+                if cv_metrics_for_plot and holdout_full_metrics:
+                    cv_holdout_png = performance_dir / "cv_vs_holdout_comparison.png"
+                    model_name = selected_kind.upper() + " " if selected_kind != "hybrid" else ""
+                    save_cv_vs_holdout_comparison_plot(cv_metrics_for_plot, holdout_full_metrics, cv_holdout_png, title_prefix=model_name)
+                
+                # === Extra Outputs Plots ===
+                extra_cols = config.OTHER_REGRESSION_COLS
+                if extra_cols and len(extra_cols) > 0:
+                    # Get actual extra values from holdout data
+                    y_extra_holdout, _ = make_extra_targets(holdout_df, extra_cols, [])
+                    if y_extra_holdout is not None and "extra_pred" in holdout_pred:
+                        y_extra_pred = holdout_pred["extra_pred"]
+                        y_extra_holdout_notp = y_extra_holdout[notp_mask]
+                        y_extra_pred_notp = y_extra_pred[notp_mask] if len(y_extra_pred) == len(y_holdout_class) else y_extra_pred
+                        
+                        extra_metrics = save_holdout_extra_outputs_plots(
+                            y_extra_holdout_notp,
+                            y_extra_pred_notp,
+                            extra_cols,
+                            performance_dir,
+                        )
+                        print(f"[INFO] Extra outputs holdout metrics: {extra_metrics}")
+                    else:
+                        print("[WARN] Extra outputs not available in holdout predictions.")
             else:
                 print("[WARN] No NoTP samples in holdout set for Tmax evaluation.")
         except Exception as e:

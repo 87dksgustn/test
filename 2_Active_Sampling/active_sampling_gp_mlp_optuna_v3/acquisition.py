@@ -54,13 +54,122 @@ def predict_gp_outputs(models, x):
         tpred = np.zeros(x.shape[0]); tstd = np.zeros(x.shape[0])
     return {"p_tp": p_tp, "p_notp": p_notp, "boundary_score": boundary, "clf_uncertainty": clf_unc, "tmax_pred": tpred, "tmax_std": tstd}
 
+
+def predict_hybrid_outputs(models, x):
+    """Predict outputs using HybridModels bundle (different model per task)."""
+    n = x.shape[0]
+    
+    # Classifier prediction
+    if models.clf_kind == "mlp":
+        clf_pred = predict_mlp_ensemble(models.clf_model, x)
+        p_tp = clf_pred["p_tp"]
+        clf_unc = clf_pred["p_tp_std"]
+    else:
+        clf_pred = predict_gp_outputs(models.clf_model, x)
+        p_tp = clf_pred["p_tp"]
+        clf_unc = clf_pred["clf_uncertainty"]
+    
+    p_notp = 1 - p_tp
+    boundary = np.clip(1 - 2 * np.abs(p_tp - 0.5), 0, 1)
+    
+    # Tmax regressor prediction
+    if models.tmax_kind == "mlp":
+        tmax_pred_result = predict_mlp_ensemble(models.tmax_model, x)
+        tmax_pred = tmax_pred_result["tmax_pred"]
+        tmax_std = tmax_pred_result["tmax_std"]
+    else:
+        if models.tmax_model.has_tmax_model:
+            tmax_pred, tmax_std = models.tmax_model.reg_tmax.predict(x, return_std=True)
+        else:
+            tmax_pred = np.zeros(n)
+            tmax_std = np.zeros(n)
+    
+    result = {
+        "p_tp": p_tp,
+        "p_notp": p_notp,
+        "boundary_score": boundary,
+        "clf_uncertainty": clf_unc,
+        "tmax_pred": tmax_pred,
+        "tmax_std": tmax_std,
+    }
+    
+    # Extra outputs prediction (each can use different model)
+    if models.extra_cols and models.extra_models:
+        extra_preds = []
+        extra_stds = []
+        for col in models.extra_cols:
+            if col in models.extra_models:
+                model, kind = models.extra_models[col]
+                if kind == "mlp":
+                    epred = predict_mlp_ensemble(model, x)
+                    if "extra_pred" in epred and epred.get("extra_cols"):
+                        col_idx = list(epred["extra_cols"]).index(col) if col in epred["extra_cols"] else -1
+                        if col_idx >= 0:
+                            extra_preds.append(epred["extra_pred"][:, col_idx])
+                            extra_stds.append(epred.get("extra_std", np.zeros((n, len(epred["extra_cols"]))))[:, col_idx])
+                        else:
+                            extra_preds.append(np.zeros(n))
+                            extra_stds.append(np.zeros(n))
+                    else:
+                        extra_preds.append(np.zeros(n))
+                        extra_stds.append(np.zeros(n))
+                else:
+                    # GP model
+                    if hasattr(model, "reg_extra") and col in model.reg_extra:
+                        ep, estd = model.reg_extra[col].predict(x, return_std=True)
+                        extra_preds.append(ep)
+                        extra_stds.append(estd)
+                    else:
+                        extra_preds.append(np.zeros(n))
+                        extra_stds.append(np.zeros(n))
+        
+        if extra_preds:
+            result["extra_pred"] = np.column_stack(extra_preds)
+            result["extra_std"] = np.column_stack(extra_stds)
+            result["extra_cols"] = models.extra_cols
+    
+    return result
+
+
 def predict_outputs(models, x):
+    # Hybrid model: route to dedicated function
+    if getattr(models, "kind", "gp") == "hybrid":
+        return predict_hybrid_outputs(models, x)
+    
     if getattr(models, "kind", "gp") == "mlp":
         pred = predict_mlp_ensemble(models, x)
         p_tp = pred["p_tp"]
         boundary = np.clip(1 - 2*np.abs(p_tp-0.5), 0, 1)
-        return {"p_tp": p_tp, "p_notp": pred["p_notp"], "boundary_score": boundary, "clf_uncertainty": pred["p_tp_std"], "tmax_pred": pred["tmax_pred"], "tmax_std": pred["tmax_std"]}
-    return predict_gp_outputs(models, x)
+        result = {
+            "p_tp": p_tp,
+            "p_notp": pred["p_notp"],
+            "boundary_score": boundary,
+            "clf_uncertainty": pred["p_tp_std"],
+            "tmax_pred": pred["tmax_pred"],
+            "tmax_std": pred["tmax_std"],
+        }
+        # Include extra outputs if available (for reporting only)
+        if "extra_pred" in pred and "extra_cols" in pred:
+            result["extra_pred"] = pred["extra_pred"]
+            result["extra_std"] = pred.get("extra_std")
+            result["extra_cols"] = pred["extra_cols"]
+        return result
+    # GP model
+    gp_result = predict_gp_outputs(models, x)
+    # Add extra outputs from GP regressors if available
+    if hasattr(models, "reg_extra") and models.reg_extra and models.extra_cols:
+        extra_preds = []
+        extra_stds = []
+        for col in models.extra_cols:
+            if col in models.reg_extra:
+                ep, estd = models.reg_extra[col].predict(x, return_std=True)
+                extra_preds.append(ep)
+                extra_stds.append(estd)
+        if extra_preds:
+            gp_result["extra_pred"] = np.column_stack(extra_preds)
+            gp_result["extra_std"] = np.column_stack(extra_stds)
+            gp_result["extra_cols"] = models.extra_cols
+    return gp_result
 
 def compute_acquisition_scores(candidate_df, labeled_df, x_candidate_transformed, x_train_transformed, models, config):
     pred = predict_outputs(models, x_candidate_transformed)
@@ -82,4 +191,13 @@ def compute_acquisition_scores(candidate_df, labeled_df, x_candidate_transformed
     out["tmax_pred_given_notp"] = pred["tmax_pred"]; out["tmax_std_given_notp"] = pred["tmax_std"]
     out["tmax_scaled"] = tmax_scaled; out["notp_window_score"] = notp_win; out["local_sparsity"] = local; out["combo_priority"] = combo
     out["acq_boundary"] = acq_b; out["acq_notp_high_tmax"] = acq_t; out["acq_uncertainty_sparse"] = acq_u
+    # Add extra output predictions (view-only, not used for scoring/bucket allocation)
+    if "extra_pred" in pred and "extra_cols" in pred:
+        extra_cols = pred["extra_cols"]
+        extra_pred = pred["extra_pred"]
+        extra_std = pred.get("extra_std")
+        for i, col in enumerate(extra_cols):
+            out[f"{col}_pred_given_notp"] = extra_pred[:, i]
+            if extra_std is not None:
+                out[f"{col}_std_given_notp"] = extra_std[:, i]
     return out

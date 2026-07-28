@@ -1,0 +1,147 @@
+{
+  "model_mode": "auto",
+  "selected_model": "gp",
+  "reason": "GP selected. MLP composite_score did not exceed GP by margin. gp=0.8066, mlp=0.8090.",
+  "gp_cv_result": {
+    "fold_count": 5,
+    "accuracy_mean": 0.7386913528297916,
+    "accuracy_std": 0.04096247268974988,
+    "accuracy": 0.7386913528297916,
+    "tp_precision_mean": 0.7568280922431867,
+    "tp_precision_std": 0.04664546656242689,
+    "tp_precision": 0.7568280922431867,
+    "tp_recall_mean": 0.7208163265306122,
+    "tp_recall_std": 0.060118444800641796,
+    "tp_recall": 0.7208163265306122,
+    "tp_f1_mean": 0.7367185470410972,
+    "tp_f1_std": 0.03984513867509587,
+    "tp_f1": 0.7367185470410972,
+    "tmax_mae_mean": 1.4077426925632541,
+    "tmax_mae_std": 0.08960039556645433,
+    "tmax_mae": 1.4077426925632541,
+    "tmax_rmse_mean": 1.9023292723335359,
+    "tmax_rmse_std": 0.26783285998017686,
+    "tmax_rmse": 1.9023292723335359,
+    "tmax_r2_mean": 0.9977031638190293,
+    "tmax_r2_std": 0.00042241023289311594,
+    "tmax_r2": 0.9977031638190293,
+    "weighted_mean_score": 0.8070628218192343,
+    "weighted_std_score": 0.038154973205208005,
+    "stable_score": 0.7879853352166303,
+    "cv_splits": 5
+  },
+  "gp_score": 0.7879853352166303,
+  "mlp_eligibility": {
+    "n_total": 486,
+    "n_notp": 239,
+    "n_tp": 247,
+    "min_combo_count": 30,
+    "torch_available": true,
+    "notp_total": true,
+    "notp_count": true,
+    "tp_count": true,
+    "combo_floor": true,
+    "torch_ready": true,
+    "eligible": true
+  },
+  "mlp_cv_result": {
+    "fold_count": 5,
+    "accuracy_mean": 0.7511256048811277,
+    "accuracy_std": 0.05832341322019894,
+    "accuracy": 0.7511256048811277,
+    "tp_precision_mean": 0.8048737748737749,
+    "tp_precision_std": 0.06173487523790285,
+    "tp_precision": 0.8048737748737749,
+    "tp_recall_mean": 0.6768163265306122,
+    "tp_recall_std": 0.0960710551977745,
+    "tp_recall": 0.6768163265306122,
+    "tp_f1_mean": 0.7321281528864081,
+    "tp_f1_std": 0.06792846272819822,
+    "tp_f1": 0.7321281528864081,
+    "tmax_mae_mean": 3.8317305001655653,
+    "tmax_mae_std": 0.5009338453432116,
+    "tmax_mae": 3.8317305001655653,
+    "tmax_rmse_mean": 5.025431153320577,
+    "tmax_rmse_std": 0.5839443351873305,
+    "tmax_rmse": 5.025431153320577,
+    "tmax_r2_mean": 0.9834897188165972,
+    "tmax_r2_std": 0.004416928764315913,
+    "tmax_r2": 0.9834897188165972,
+    "weighted_mean_score": 0.7798807094875668,
+    "weighted_std_score": 0.06294629877382167,
+    "stable_score": 0.748407560100656,
+    "cv_splits": 5
+  },
+  "mlp_score": 0.748407560100656,
+  "gp_holdout_result": {
+    "accuracy": 0.7142857142857143,
+    "tp_precision": 0.7115384615384616,
+    "tp_recall": 0.74,
+    "tp_f1": 0.7254901960784313,
+    "confusion_matrix_labels_NoTP0_TP1": [
+      [
+        33,
+        15
+      ],
+      [
+        13,
+        37
+      ]
+    ],
+    "tmax_mae": 1.0729490398317563,
+    "tmax_rmse": 1.6253015347776962,
+    "tmax_r2": 0.9982129563910854,
+    "holdout_n": 98,
+    "tmax_eval_n": 48,
+    "weighted_score": 0.8145619261330119
+  },
+  "mlp_holdout_result": {
+    "accuracy": 0.7959183673469388,
+    "tp_precision": 0.8260869565217391,
+    "tp_recall": 0.76,
+    "tp_f1": 0.7916666666666666,
+    "confusion_matrix_labels_NoTP0_TP1": [
+      [
+        40,
+        8
+      ],
+      [
+        12,
+        38
+      ]
+    ],
+    "tmax_mae": 3.2331688655680346,
+    "tmax_rmse": 4.095976694813442,
+    "tmax_r2": 0.9886503566741763,
+    "holdout_n": 98,
+    "tmax_eval_n": 48,
+    "weighted_score": 0.8349284403355862
+  },
+  "composite_weights": {
+    "cv": 0.3,
+    "holdout": 0.7
+  },
+  "gp_composite_score": 0.8065889488580974,
+  "mlp_composite_score": 0.8089721762651071,
+  "tuned_gp_params": {
+    "kernel": "Matern32",
+    "constant": 1.5751320499779735,
+    "length_scale": 0.8066708658064159
+  },
+  "tuned_mlp_params": {
+    "n_layers": 3,
+    "width": 128,
+    "dropout": 0.28184968246925673,
+    "learning_rate": 0.0020978213384576817,
+    "weight_decay": 6.218704727769077e-05,
+    "tmax_loss_weight": 0.9374993880184934
+  },
+  "tuned_tmax_params": {
+    "kernel": "Matern32",
+    "constant": 9.445192959485095,
+    "length_scale": 1.1632930830277517,
+    "noise_level": 0.0009244162366499492,
+    "alpha": 5.2575418948736965e-06,
+    "normalize_y": true
+  }
+}

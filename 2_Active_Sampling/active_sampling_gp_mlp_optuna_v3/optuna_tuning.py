@@ -34,6 +34,7 @@ def tune_gpc_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
     if not OPTUNA_AVAILABLE:
         return None, {"skipped": True, "reason": "Optuna is not installed."}
     n_trials = n_trials or config.GP_OPTUNA_N_TRIALS
+    use_ard_for_optuna = bool(getattr(config, "GP_OPTUNA_USE_ARD", False))
     def objective(trial):
         params = {
             "kernel": trial.suggest_categorical("kernel", ["RBF", "Matern32", "Matern52"]),
@@ -41,12 +42,29 @@ def tune_gpc_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
             "length_scale": trial.suggest_float("length_scale", 0.6, 4.0, log=True),
             "n_restarts_optimizer": 1,
         }
-        res = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=params, random_state=config.RANDOM_SEED)
+        res = evaluate_gpc_cv(
+            x_train,
+            y_class,
+            y_tmax=y_tmax,
+            pass_label=config.PASS_LABEL,
+            tp_label=config.FAIL_LABEL,
+            n_splits=config.CV_SPLITS,
+            weights=config.MODEL_SELECTION_WEIGHTS,
+            std_penalty=config.CV_STD_PENALTY,
+            params=params,
+            random_state=config.RANDOM_SEED,
+            use_ard=use_ard_for_optuna,
+        )
         return res["summary"].get("stable_score", -1e9)
     sampler = optuna.samplers.TPESampler(seed=config.RANDOM_SEED)
     study = optuna.create_study(direction="maximize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials, timeout=config.GP_OPTUNA_TIMEOUT_SEC, show_progress_bar=False)
-    return study.best_params, {"best_value": study.best_value, "n_trials": len(study.trials), "best_params": study.best_params}
+    return study.best_params, {
+        "best_value": study.best_value,
+        "n_trials": len(study.trials),
+        "best_params": study.best_params,
+        "use_ard_in_optuna": use_ard_for_optuna,
+    }
 
 def tune_mlp_with_optuna(x_train, y_class, y_tmax, y_extra, config, n_trials=None):
     if not OPTUNA_AVAILABLE:
@@ -135,6 +153,7 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
         return None, {"skipped": True, "reason": "Not enough NoTP samples for Tmax GPR tuning."}
 
     n_trials = n_trials or config.TMAX_OPTUNA_N_TRIALS
+    use_ard_for_optuna = bool(getattr(config, "TMAX_OPTUNA_USE_ARD", False))
     n_splits = max(2, min(config.CV_SPLITS, len(y_pass)))
     cv_splits = list(KFold(n_splits=n_splits, shuffle=True, random_state=config.RANDOM_SEED).split(x_pass))
 
@@ -164,6 +183,7 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
                 min_pass_samples=4,
                 random_state=config.RANDOM_SEED,
                 params=params,
+                use_ard=use_ard_for_optuna,
             )
             if not has:
                 rmses.append(1e9)
@@ -183,6 +203,7 @@ def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
         "n_trials": len(study.trials),
         "best_params": study.best_params,
         "objective": "minimize_noTP_tmax_rmse",
+        "use_ard_in_optuna": use_ard_for_optuna,
     }
 
 def maybe_tune_models(df, x_train, y_class, y_tmax, y_extra, config):
