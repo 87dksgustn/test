@@ -1,0 +1,51 @@
+배터리 실험을 위한 "Active Sampling GP/MLP 하이브리드 모델" 파이프라인의 상세 프레젠테이션용 플로우차트를 생성해줘. 깔끔한 모던 디자인, 흰색 배경.
+
+위에서 아래로 흐르는 7개 주요 단계:
+
+**1단계: 데이터 준비** (연한 파란색)
+- 입력: 라벨링된 실험 CSV 파일
+- 하위 단계: 데이터 로드 → 컬럼 검증 → 이산 조합 ID 생성 → 피처(X) & 타겟(y_class, y_tmax, y_extra) 생성
+
+**2단계: 하이퍼파라미터 튜닝 (Optuna)** (주황색)
+- 3개 병렬 분기:
+  • GP Classifier 튜닝 (30회, 5-fold CV)
+  • MLP 튜닝 (20회, 5-fold CV) → hidden_dims [256,256,256]
+  • Tmax GPR 튜닝 (25회)
+
+**3단계: 모델 선택 & 학습** (초록색)
+- GP vs MLP CV 메트릭 비교
+- 하이브리드 선택: 분류기(tp_recall×0.7 + tp_f1×0.3), 회귀(R² 비교)
+- 결과: 피팅된 하이브리드 모델
+
+**4단계: 후보 생성** (노란색)
+- 14개 이산 조합 × 연속 변수 범위로 후보 생성
+- 기존 데이터와 최소 거리 필터링
+- 결과: ~40,000개 후보군
+
+**5단계: Acquisition 점수 계산** (보라색)
+- 각 후보에 대해 계산: p_tp, clf_uncertainty, boundary_score, local_sparsity, combo_priority
+- 가중 조합 → acq_boundary, acq_notp_high_tmax, acq_uncertainty_sparse
+
+**6단계: 배치 선택** (빨간색)
+- 버킷 기반 선택 (총 23개):
+  • Boundary ~69% | NoTP High Tmax ~20% | Uncertainty ~9% | Random ~2%
+- 콤보당 최대 3개, 배치 포인트 간 최소 거리 제약
+- 콤보 보강: 부족/오분류 콤보 샘플 추가
+
+**7단계: Holdout 평가** (회색)
+- 별도 테스트셋으로 평가
+- 메트릭: Accuracy, Precision, Recall, F1, Tmax RMSE/R²
+- 오분류 패턴 분석, 이터레이션별 트렌드 추적
+
+**출력물** (하단):
+- next_sampling_candidates.csv
+- model_selection_report.json
+- 대시보드 플롯들
+
+각 단계를 화살표로 연결. 아이콘 포함. 범례 추가:
+- GP = Gaussian Process
+- MLP = Multi-Layer Perceptron
+- CV = Cross-Validation
+- TP/NoTP = Thermal Pass / No Thermal Pass
+
+해상도: 1920x1080. 산세리프 폰트. 전문 기술 문서 스타일.
