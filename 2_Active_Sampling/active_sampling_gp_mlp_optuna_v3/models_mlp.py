@@ -60,6 +60,14 @@ def _check_torch():
 def _cfg(config, params, key):
     return params[key] if params and key in params else getattr(config, key)
 
+def _compute_hidden_dims(params, config):
+    """Compute hidden_dims from params, handling n_layers/width or direct hidden_dims."""
+    if params and "hidden_dims" in params:
+        return params["hidden_dims"]
+    if params and "n_layers" in params and "width" in params:
+        return [params["width"]] * params["n_layers"]
+    return config.MLP_HIDDEN_DIMS
+
 def _tmax_scaler(y_tmax, y_class, pass_label):
     y = np.asarray(y_tmax[y_class == pass_label], dtype=float)
     y = y[np.isfinite(y)]
@@ -109,7 +117,7 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
     _check_torch(); torch.manual_seed(seed); np.random.seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     max_epochs = max_epochs or int(_cfg(config, params, "MLP_MAX_EPOCHS"))
-    hidden_dims = params.get("hidden_dims", config.MLP_HIDDEN_DIMS) if params else config.MLP_HIDDEN_DIMS
+    hidden_dims = _compute_hidden_dims(params, config)
     dropout = float(params.get("dropout", config.MLP_DROPOUT)) if params else config.MLP_DROPOUT
     lr = float(params.get("learning_rate", config.MLP_LEARNING_RATE)) if params else config.MLP_LEARNING_RATE
     weight_decay = float(params.get("weight_decay", config.MLP_WEIGHT_DECAY)) if params else config.MLP_WEIGHT_DECAY

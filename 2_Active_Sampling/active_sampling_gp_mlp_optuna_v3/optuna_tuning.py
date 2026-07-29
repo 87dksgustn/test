@@ -127,10 +127,14 @@ def tune_mlp_with_optuna(x_train, y_class, y_tmax, y_extra, config, n_trials=Non
     sampler = optuna.samplers.TPESampler(seed=config.RANDOM_SEED)
     study = optuna.create_study(direction="maximize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials, timeout=config.MLP_OPTUNA_TIMEOUT_SEC, show_progress_bar=False)
+    # Reconstruct hidden_dims from best trial's n_layers and width
+    best_params = dict(study.best_params)
+    if "n_layers" in best_params and "width" in best_params:
+        best_params["hidden_dims"] = [best_params["width"]] * best_params["n_layers"]
     report = {
         "best_value": study.best_value,
         "n_trials": len(study.trials),
-        "best_params": study.best_params,
+        "best_params": best_params,
         "gate": {
             "min_tp_recall": float(config.MLP_OPTUNA_GATE_MIN_TP_RECALL),
             "min_tp_f1": float(config.MLP_OPTUNA_GATE_MIN_TP_F1),
@@ -140,7 +144,7 @@ def tune_mlp_with_optuna(x_train, y_class, y_tmax, y_extra, config, n_trials=Non
             **gate_stats,
         },
     }
-    return study.best_params, report
+    return best_params, report
 
 def tune_tmax_gpr_with_optuna(x_train, y_class, y_tmax, config, n_trials=None):
     if not OPTUNA_AVAILABLE:
