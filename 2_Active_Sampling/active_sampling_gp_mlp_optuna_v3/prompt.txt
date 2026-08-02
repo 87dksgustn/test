@@ -88,8 +88,10 @@
 │ • length_scale    │ │ • learning_rate   │ │ • length_scale    │
 │ • noise_level     │ │ • weight_decay    │ │ • noise_level     │
 ├───────────────────┤ ├───────────────────┤ ├───────────────────┤
-│ 목적: minimize    │ │ 목적: weighted    │ │ 목적: minimize    │
-│ negative log-loss │ │ (recall + f1)     │ │ RMSE              │
+│ 목적: maximize    │ │ 목적: maximize    │ │ 목적: minimize    │
+│ stable_score      │ │ stable_score      │ │ RMSE              │
+│ (recall×0.7+f1×0.3│ │ (recall×0.7+f1×0.3│ │                   │
+│  - 편차 페널티)   │ │  - 편차 페널티)   │ │                   │
 └───────────────────┘ └───────────────────┘ └───────────────────┘
         ↓                     ↓                     ↓
         └─────────────────────┼─────────────────────┘

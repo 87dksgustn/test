@@ -21,6 +21,25 @@ try:
     import optuna
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("Optuna is required for z_surrogate_optimize_gp.py") from exc
+
+
+def add_interaction_terms(df, interaction_terms):
+    """Add interaction term columns to DataFrame."""
+    if not interaction_terms:
+        return df
+    df = df.copy()
+    for col1, col2, new_col in interaction_terms:
+        if col1 in df.columns and col2 in df.columns:
+            df[new_col] = df[col1].astype(float) * df[col2].astype(float)
+    return df
+
+
+def compute_interaction_values(cont_values, interaction_terms):
+    """Compute interaction term values from base continuous values."""
+    for col1, col2, new_col in interaction_terms:
+        if col1 in cont_values and col2 in cont_values:
+            cont_values[new_col] = cont_values[col1] * cont_values[col2]
+    return cont_values
 OUTPUT_ROOT = Path("outputs") / "z_surrogate_optimize_gp"
 PARETO_CSV_NAME = "pareto_all_bins.csv"
 LEXICOGRAPHIC_CSV_NAME = "lexicographic_top_by_bin.csv"
@@ -92,7 +111,9 @@ def write_json_with_fallback(obj, path):
 
 
 def load_training_data(cfg):
-    df = load_labeled_data("initial_dataset.csv")
+    df = load_labeled_data(cfg.INPUT_CSV)
+    # Add interaction terms before validation
+    df = add_interaction_terms(df, getattr(cfg, "INTERACTION_TERMS", []))
     validate_required_columns(
         df,
         cfg.CONTINUOUS_COLS,
@@ -273,6 +294,8 @@ def save_pareto_front_figure(all_df, pareto_df, output_png, bin_labels):
 
 
 def evaluate_point(preprocessor, nn_model, models, cfg, combo_row, cont_values):
+    # Compute interaction terms from base values
+    cont_values = compute_interaction_values(cont_values, getattr(cfg, "INTERACTION_TERMS", []))
     row = {col: float(cont_values[col]) for col in cfg.CONTINUOUS_COLS}
     for col in cfg.DISCRETE_COLS:
         row[col] = combo_row[col]
@@ -338,7 +361,9 @@ def optimize_single_combo(preprocessor, nn_model, models, cfg, combo_row, n_tria
 
         def objective(trial):
             cont_values = {}
-            for col in cfg.CONTINUOUS_COLS:
+            # Only optimize BASE continuous columns (not interaction terms)
+            base_cols = getattr(cfg, "BASE_CONTINUOUS_COLS", cfg.CONTINUOUS_COLS)
+            for col in base_cols:
                 lo, hi = cfg.CONTINUOUS_BOUNDS[col]
                 if quota_label is not None and col == quota_col:
                     lo, hi = label_bounds[quota_label]
