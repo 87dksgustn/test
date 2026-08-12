@@ -4,8 +4,8 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_17_dataset.csv"
-FINAL_TEST_CSV = "Final_test_Dataset.csv"
+INPUT_CSV = "Itr_17_dataset_Si1.csv"
+FINAL_TEST_CSV = "Final_test_Dataset_Si1.csv"
 
 # Base continuous columns (original features)
 BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]

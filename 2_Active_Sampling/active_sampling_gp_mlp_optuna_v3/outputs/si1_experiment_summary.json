@@ -1,0 +1,68 @@
+{
+  "rows": {
+    "train": 625,
+    "dedup": 616,
+    "weighted": 625,
+    "test": 100
+  },
+  "baseline": {
+    "acc": 0.88,
+    "tp_f1": 0.8666666666666667,
+    "tp_recall": 0.8666666666666667,
+    "rmse": 9.941068818769388,
+    "r2": 0.925981111753228,
+    "model": "hybrid"
+  },
+  "optuna": {
+    "acc": 0.88,
+    "tp_f1": 0.8571428571428571,
+    "tp_recall": 0.8,
+    "rmse": 9.94112784372301,
+    "r2": 0.9259802327784424,
+    "model": "hybrid"
+  },
+  "dedup_optuna": {
+    "acc": 0.88,
+    "tp_f1": 0.8571428571428571,
+    "tp_recall": 0.8,
+    "rmse": 9.959257448267975,
+    "r2": 0.9257100073505833,
+    "model": "hybrid"
+  },
+  "weighted_optuna": {
+    "acc": 0.86,
+    "tp_f1": 0.8409090909090909,
+    "tp_recall": 0.8222222222222222,
+    "rmse": 13.533382266793481,
+    "r2": 0.8628205379230209,
+    "model": "hybrid"
+  },
+  "tuned_params": {
+    "gp_params": {
+      "kernel": "RBF",
+      "constant": 0.5404103854647329,
+      "length_scale": 1.4253164479427205
+    },
+    "mlp_params": {
+      "n_layers": 3,
+      "width": 256,
+      "dropout": 0.2497327922401265,
+      "learning_rate": 0.00020589728197687926,
+      "weight_decay": 3.5113563139704077e-06,
+      "tmax_loss_weight": 0.34672360788274703,
+      "hidden_dims": [
+        256,
+        256,
+        256
+      ]
+    },
+    "tmax_params": {
+      "kernel": "Matern52",
+      "constant": 0.7591104805282696,
+      "length_scale": 0.7563096100614171,
+      "noise_level": 2.9914693021302195e-05,
+      "alpha": 1.6081669283634655e-10,
+      "normalize_y": true
+    }
+  }
+}
