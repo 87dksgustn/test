@@ -31,7 +31,7 @@ continuous_vars = {
     # "Cell_H": (300, 600),
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
-    "Barrier_Thx": (0.25, 2.5),
+    "Barrier_Thx": (0.5, 2.5),
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
@@ -49,17 +49,17 @@ continuous_exclusion_windows = {
 }
 
 discrete_vars = {
-    "Barrier_Type": ["Si1", "Si2", "Si3","Aerogel1", "Aerogel2"],
-    "Barrier_Outer_Type": ["PU", "Si1", "Si2", "Si3"],
+    "Barrier_Type": ["Si1"],
+    "Barrier_Outer_Type": ["Si1", "PU"],
     # "Cooling_Loc": ["Top", "Bottom"],
     # "Heater_Type" : ["Small", "Medium"],
     # "Heater_Loc" : ["Center", "DSF", "Lead"],
     # "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 10
+samples_per_discrete_combination = 150
 
-n_trials = 300
+n_trials = 150
 seed_min = 0
 seed_max = 100000
 
@@ -67,12 +67,12 @@ weight_A = 0.6   # min_over_groups_min_distance
 weight_B = 0.4   # group_min_distance_q10 (하위 10% 분위수)
 
 # seed 탐색 조기종료 설정 (patience 기반)
-early_stop_warmup_trials = 80
-early_stop_patience = 120
+early_stop_warmup_trials = 40
+early_stop_patience = 50
 early_stop_min_delta = 1e-6
 
 # greedy 배정 후 swap 국소개선 반복 횟수
-local_swap_iterations = 60
+local_swap_iterations = 35
 
 # Optuna 병렬 trial 실행 수 (-1: 사용 가능한 모든 코어)
 optuna_n_jobs = -1
