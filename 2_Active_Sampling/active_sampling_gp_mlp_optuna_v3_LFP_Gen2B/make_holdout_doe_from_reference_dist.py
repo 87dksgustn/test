@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -70,8 +71,21 @@ def greedy_maximin_subset(df_cont: pd.DataFrame, n_pick: int, seed: int) -> np.n
     return np.array(selected, dtype=int)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate holdout DOE from initial reference distribution.")
+    parser.add_argument("--n-output", type=int, default=N_OUTPUT, help="Number of holdout DOE rows to generate.")
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED, help="Random seed for reproducibility.")
+    return parser.parse_args()
+
+
 def main() -> None:
-    rng = np.random.default_rng(RANDOM_SEED)
+    args = parse_args()
+    n_output = int(args.n_output)
+    seed = int(args.seed)
+    if n_output <= 0:
+        raise ValueError("--n-output must be a positive integer.")
+
+    rng = np.random.default_rng(seed)
 
     ref = pd.read_csv(REFERENCE_CSV)
     ref = ref.loc[:, ~ref.columns.astype(str).str.startswith("Unnamed")].copy()
@@ -90,7 +104,7 @@ def main() -> None:
     if len(ref_renamed) < 2:
         raise ValueError("Reference CSV has too few valid rows for distribution-based DOE generation.")
 
-    n_pool = max(N_OUTPUT * OVERSAMPLE_FACTOR, 1000)
+    n_pool = max(n_output * OVERSAMPLE_FACTOR, 1000)
     src_idx = rng.integers(0, len(ref_renamed), size=n_pool)
     pool = ref_renamed.iloc[src_idx][base_cols].reset_index(drop=True).copy()
 
@@ -102,7 +116,7 @@ def main() -> None:
         lo, hi = config.CONTINUOUS_BOUNDS[col]
         pool[col] = pool[col].clip(lower=float(lo), upper=float(hi))
 
-    picked_idx = greedy_maximin_subset(pool[base_cols], N_OUTPUT, RANDOM_SEED)
+    picked_idx = greedy_maximin_subset(pool[base_cols], n_output, seed)
     out = pool.iloc[picked_idx].reset_index(drop=True)
 
     # Discrete policy A: sample from current config levels.
@@ -116,8 +130,8 @@ def main() -> None:
     output_dir = config.OUTPUT_DIR / "final_test_doe"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    out_path = output_dir / "holdout_doe_50_from_initial_distribution.csv"
-    report_path = output_dir / "holdout_doe_50_from_initial_distribution_report.json"
+    out_path = output_dir / f"holdout_doe_{n_output}_from_initial_distribution.csv"
+    report_path = output_dir / f"holdout_doe_{n_output}_from_initial_distribution_report.json"
 
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
 
@@ -125,7 +139,7 @@ def main() -> None:
         "reference_csv": str(REFERENCE_CSV),
         "n_reference": int(len(ref_renamed)),
         "n_output": int(len(out)),
-        "seed": RANDOM_SEED,
+        "seed": seed,
         "method": "bootstrap_jitter_then_greedy_maximin",
         "source_column_mapping": {"continuous": cont_src},
         "continuous_cols": base_cols,

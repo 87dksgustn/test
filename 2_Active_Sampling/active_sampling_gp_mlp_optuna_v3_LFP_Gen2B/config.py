@@ -44,7 +44,7 @@ FAIL_LABEL = TP_LABEL
 
 CONTINUOUS_BOUNDS = {
     "A_Cell_D": (8.0, 16.0),
-    "C_Barrier_Thx": (0.25, 2.5),
+    "C_Barrier_Thx": (0.5, 2.5),
     "E_Barrier_Outer_Thx": (1.1, 3.0),
     "F_ThermalResin_Thx": (0.5, 2.5),
     # Interaction term bounds (computed from base bounds)
