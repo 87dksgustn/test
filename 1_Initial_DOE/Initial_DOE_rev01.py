@@ -57,7 +57,7 @@ discrete_vars = {
     # "Cell/Barrier": [1, 2],
 }
 
-samples_per_discrete_combination = 150
+samples_per_discrete_combination = 30
 
 n_trials = 150
 seed_min = 0
