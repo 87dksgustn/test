@@ -69,11 +69,11 @@ DISCRETE_LEVELS = {
 }
 S_PREFIX = "S"
 
-CURRENT_LEVEL_TARGET_TOTAL = 636
-INITIAL_TOTAL = 140
+CURRENT_LEVEL_TARGET_TOTAL = 300
+INITIAL_TOTAL = 60
 ADDITIONAL_TOTAL = CURRENT_LEVEL_TARGET_TOTAL - INITIAL_TOTAL
 
-BATCH_SIZE = 23
+BATCH_SIZE = 20
 CANDIDATES_PER_COMBO = 42000
 
 MIN_SAMPLES_PER_COMBO = 1
@@ -88,7 +88,7 @@ BUCKET_RATIO = {
 
 # === Combo Reinforcement Sampling ===
 # Automatically add extra samples for underrepresented or misclassified combos
-ENABLE_COMBO_REINFORCE = True
+ENABLE_COMBO_REINFORCE = False
 # Number of extra samples per lacking combo (combo with 0 samples in current batch)
 REINFORCE_LACKING_COMBO_COUNT = 3
 # Number of extra samples per misclassified combo (from holdout evaluation)

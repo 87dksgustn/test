@@ -119,10 +119,13 @@ def main() -> None:
     picked_idx = greedy_maximin_subset(pool[base_cols], n_output, seed)
     out = pool.iloc[picked_idx].reset_index(drop=True)
 
-    # Discrete policy A: sample from current config levels.
-    out["B_Barrier_Type"] = "Si1"
-    d_levels = list(config.DISCRETE_LEVELS["D_Barrier_Outer_Type"])
-    out["D_Barrier_Outer_Type"] = rng.choice(d_levels, size=len(out), replace=True)
+    # Discrete policy: sample from config levels for each discrete column.
+    for d_col in config.DISCRETE_COLS:
+        d_levels = list(config.DISCRETE_LEVELS[d_col])
+        if len(d_levels) == 1:
+            out[d_col] = d_levels[0]
+        else:
+            out[d_col] = rng.choice(d_levels, size=len(out), replace=True)
 
     for c1, c2, new_col in config.INTERACTION_TERMS:
         out[new_col] = pd.to_numeric(out[c1], errors="coerce") * pd.to_numeric(out[c2], errors="coerce")
