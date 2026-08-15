@@ -4,8 +4,8 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_17_dataset.csv"
-FINAL_TEST_CSV = "Final_test_Dataset.csv"
+INPUT_CSV = "Initial_Dataset.csv"
+FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
 BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -252,7 +252,7 @@ HYBRID_EXTRA_METRIC = "rmse"        # Metric to compare GP vs MLP for each extra
 HYBRID_CLASSIFIER_MARGIN = 0.01    # Weighted score improvement required
 HYBRID_REGRESSION_MARGIN = 0.02    # Relative RMSE improvement required (2%)
 
-MLP_MIN_TOTAL_SAMPLES = 350
+MLP_MIN_TOTAL_SAMPLES = 220
 MLP_MIN_CLASS_RATIO = 0.30
 MLP_MIN_PASS_SAMPLES = int(MLP_MIN_TOTAL_SAMPLES * MLP_MIN_CLASS_RATIO)
 MLP_MIN_FAIL_SAMPLES = int(MLP_MIN_TOTAL_SAMPLES * MLP_MIN_CLASS_RATIO)
@@ -336,17 +336,17 @@ ENABLE_OPTUNA_AUTO = True
 # If Optuna is not installed, code automatically skips tuning.
 # pip install optuna
 
-GP_OPTUNA_MIN_TOTAL_SAMPLES = 100
+GP_OPTUNA_MIN_TOTAL_SAMPLES = 50
 GP_OPTUNA_MIN_PASS_SAMPLES = 20
 GP_OPTUNA_MIN_FAIL_SAMPLES = 20
 GP_OPTUNA_N_TRIALS = 30
 GP_OPTUNA_TIMEOUT_SEC = None
 
-TMAX_OPTUNA_MIN_PASS_SAMPLES = 50
+TMAX_OPTUNA_MIN_PASS_SAMPLES = 30
 TMAX_OPTUNA_N_TRIALS = 25
 TMAX_OPTUNA_TIMEOUT_SEC = None
 
-MLP_OPTUNA_MIN_TOTAL_SAMPLES = 350
+MLP_OPTUNA_MIN_TOTAL_SAMPLES = 220
 MLP_OPTUNA_MIN_CLASS_RATIO = 0.30
 MLP_OPTUNA_MIN_PASS_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)
 MLP_OPTUNA_MIN_FAIL_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)
