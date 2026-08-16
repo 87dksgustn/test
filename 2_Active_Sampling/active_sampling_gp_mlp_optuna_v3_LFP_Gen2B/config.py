@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Initial_Dataset.csv"
+INPUT_CSV = "Itr_2_Dataset.csv"
 FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
@@ -24,7 +24,7 @@ DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
-TMAX_COL = "MaxT_Adj"        # Valid mainly for NoTP cases
+TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
@@ -109,7 +109,7 @@ BOUNDARY_WEIGHTS_GP = {
 # - "none": keep legacy behavior (clf_uncertainty=0 for GP path)
 # - "ensemble_std": train bootstrap GP classifiers and use std of p_tp
 GP_CLF_UNCERTAINTY_MODE = "ensemble_std"
-GP_CLF_ENSEMBLE_SIZE = 1  # Reduced for speed with ARD; increase to 5 for production
+GP_CLF_ENSEMBLE_SIZE = 5  # Reduced for speed with ARD; increase to 5 for production
 GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
