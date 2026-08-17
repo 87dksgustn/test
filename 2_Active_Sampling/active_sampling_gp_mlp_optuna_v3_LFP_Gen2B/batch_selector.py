@@ -11,7 +11,7 @@ def bucket_counts(batch_size, bucket_ratio):
     return counts
 
 def acq_col(bucket):
-    return {"boundary":"acq_boundary", "notp_high_tmax":"acq_notp_high_tmax", "uncertainty_sparse":"acq_uncertainty_sparse", "random_check":"random_score"}[bucket]
+    return {"boundary":"acq_boundary", "notp_high_tmax":"acq_notp_high_tmax", "misclass_repair":"acq_misclass_repair", "uncertainty_sparse":"acq_uncertainty_sparse", "random_check":"random_score"}[bucket]
 
 def combo_counts_after(labeled_df, selected_df):
     d = labeled_df["discrete_combo_id"].value_counts().to_dict()

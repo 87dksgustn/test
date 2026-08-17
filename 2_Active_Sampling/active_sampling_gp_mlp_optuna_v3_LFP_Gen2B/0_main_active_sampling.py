@@ -22,7 +22,7 @@ from diagnostics import combo_diagnostics
 from optuna_tuning import maybe_tune_models
 from model_selector import select_and_fit_model
 from evaluation import fold_metrics_to_df
-from acquisition import compute_acquisition_scores
+from acquisition import compute_acquisition_scores, compute_misclass_repair_score
 from batch_selector import bucket_counts, select_batch
 
 logging.basicConfig(
@@ -1525,6 +1525,39 @@ def main():
     effective_boundary_weights = make_effective_boundary_weights(config, getattr(selected_model, "kind", "gp"), df)
     scoring_cfg = build_scoring_config(config, getattr(selected_model, "kind", "gp"), effective_boundary_weights)
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
+
+    # === Misclassification repair scoring ===
+    # Score candidates by proximity to the previous iteration's holdout misclassified points.
+    scored["acq_misclass_repair"] = 0.0
+    if getattr(config, "ENABLE_MISCLASS_REPAIR", False):
+        prev_itr_dirs = sorted(
+            [d for d in config.OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("Itr_")],
+            key=lambda x: int(x.name.split("_")[1]) if x.name.split("_")[1].isdigit() else 0,
+            reverse=True,
+        )
+        prev_misclass_df = None
+        prev_misclass_csv = None
+        if prev_itr_dirs:
+            prev_misclass_csv = prev_itr_dirs[0] / "Performance" / "holdout_misclassified_samples.csv"
+            if prev_misclass_csv.exists():
+                try:
+                    prev_misclass_df = pd.read_csv(prev_misclass_csv)
+                except Exception as e:
+                    print(f"[WARN] Could not read previous misclassified samples: {e}")
+        if prev_misclass_df is not None and len(prev_misclass_df):
+            scored["acq_misclass_repair"] = compute_misclass_repair_score(
+                scored,
+                prev_misclass_df,
+                config.BASE_CONTINUOUS_COLS,
+                config.CONTINUOUS_BOUNDS,
+                combo_col="discrete_combo_id",
+                length_scale=getattr(config, "MISCLASS_REPAIR_LENGTH_SCALE", 0.15),
+                same_combo_only=getattr(config, "MISCLASS_REPAIR_SAME_COMBO_ONLY", True),
+            )
+            print(f"[INFO] Misclass repair scoring: {len(prev_misclass_df)} misclassified points from {prev_misclass_csv}")
+        else:
+            print("[INFO] Misclass repair: no previous misclassified samples found; bucket will be redistributed.")
+
     scored.nlargest(2000, "acq_boundary").to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
 
     # === Dynamic batch size & bucket ratio control ===
@@ -1551,6 +1584,12 @@ def main():
         effective_bucket_ratio = dict(config.BUCKET_RATIO)
         if bucket_ratio_mode == "shadow":
             print(f"[INFO] BUCKET_RATIO_MODE=shadow -> using config bucket_ratio, recommended: {bucket_ratio_rec.get('recommended_bucket_ratio')}")
+
+    # Drop misclass_repair bucket when there is nothing to repair (or disabled);
+    # bucket_counts normalizes by ratio sum, so its share is redistributed proportionally.
+    if float(effective_bucket_ratio.get("misclass_repair", 0.0)) > 0.0 and float(scored["acq_misclass_repair"].max()) <= 0.0:
+        dropped_ratio = effective_bucket_ratio.pop("misclass_repair")
+        print(f"[INFO] misclass_repair ratio ({dropped_ratio}) redistributed to remaining buckets.")
 
     bucket_target_counts = bucket_counts(effective_batch_size, effective_bucket_ratio)
     bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
@@ -1607,7 +1646,7 @@ def main():
     base_cont = getattr(config, "BASE_CONTINUOUS_COLS", config.CONTINUOUS_COLS)
     interaction_cols = [t[2] for t in getattr(config, "INTERACTION_TERMS", [])]
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + list(base_cont) + config.DISCRETE_COLS + ["discrete_combo_id"]
-    score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]
+    score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse", "acq_misclass_repair"]
     # Only include interaction columns that exist in the dataframe
     interaction_cols = [c for c in interaction_cols if c in selected.columns]
     selected = selected[front + score_cols + interaction_cols]

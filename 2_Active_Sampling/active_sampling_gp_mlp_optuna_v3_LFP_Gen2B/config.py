@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_2_Dataset.csv"
+INPUT_CSV = "Itr_4_Dataset.csv"
 FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
@@ -80,11 +80,23 @@ MIN_SAMPLES_PER_COMBO = 1
 MAX_SAMPLES_PER_COMBO = 10**9
 
 BUCKET_RATIO = {
-    "boundary": 0.70,
+    "boundary": 0.60,
     "notp_high_tmax": 0.20,  # Increased for Tmax R2 recovery
-    "uncertainty_sparse": 0.07,
-    "random_check": 0.03,
+    "misclass_repair": 0.10,  # Candidates near previous holdout misclassified points
+    "uncertainty_sparse": 0.05,
+    "random_check": 0.05,  # Raised from 0.03: confidently-wrong regions need exploration
 }
+
+# === Misclassification repair sampling ===
+# Reserve batch slots for new candidates near the previous iteration's
+# holdout misclassified points (confidently-wrong regions are invisible to
+# boundary/uncertainty acquisition, so they must be targeted explicitly).
+ENABLE_MISCLASS_REPAIR = True
+# Distance kernel length scale in bounds-normalized feature space:
+# score = exp(-dist / length_scale). Smaller = tighter around misclassified points.
+MISCLASS_REPAIR_LENGTH_SCALE = 0.15
+# Only give score to candidates sharing the discrete combo of the misclassified point
+MISCLASS_REPAIR_SAME_COMBO_ONLY = True
 
 # === Combo Reinforcement Sampling ===
 # Automatically add extra samples for underrepresented or misclassified combos
@@ -307,12 +319,14 @@ UNCERTAINTY_TARGET_HIGH = 0.35
 BUCKET_RATIO_MIN = {
     "boundary": 0.50,
     "notp_high_tmax": 0.08,
+    "misclass_repair": 0.05,
     "uncertainty_sparse": 0.02,
     "random_check": 0.02,
 }
 BUCKET_RATIO_MAX = {
     "boundary": 0.85,
     "notp_high_tmax": 0.28,
+    "misclass_repair": 0.15,
     "uncertainty_sparse": 0.18,
     "random_check": 0.10,
 }
