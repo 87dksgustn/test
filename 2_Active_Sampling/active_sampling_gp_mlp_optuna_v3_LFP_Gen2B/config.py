@@ -92,6 +92,14 @@ BUCKET_RATIO = {
 # holdout misclassified points (confidently-wrong regions are invisible to
 # boundary/uncertainty acquisition, so they must be targeted explicitly).
 ENABLE_MISCLASS_REPAIR = True
+# Source of misclassified points used for repair scoring:
+# - "cv": out-of-fold misclassified TRAINING points (recommended; keeps holdout
+#         untouched by the sampling policy -> no adaptive overfitting to holdout)
+# - "holdout": previous iteration's holdout misclassified samples (biases
+#              holdout metrics optimistically; use only if CV signal is too weak)
+MISCLASS_REPAIR_SOURCE = "cv"
+# Number of CV folds for out-of-fold misclassification detection
+MISCLASS_REPAIR_CV_SPLITS = 5
 # Distance kernel length scale in bounds-normalized feature space:
 # score = exp(-dist / length_scale). Smaller = tighter around misclassified points.
 MISCLASS_REPAIR_LENGTH_SCALE = 0.15

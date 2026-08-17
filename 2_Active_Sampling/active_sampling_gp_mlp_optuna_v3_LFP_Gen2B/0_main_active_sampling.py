@@ -42,6 +42,34 @@ def add_interaction_terms(df, interaction_terms):
     return df
 
 
+def collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=None):
+    """Collect out-of-fold misclassified TRAINING points via stratified CV.
+
+    Uses only training data, so the sampling policy never sees holdout labels
+    (avoids adaptive overfitting to the holdout set).
+    """
+    from sklearn.model_selection import StratifiedKFold
+    from models_gp import fit_gpc_passfail
+
+    y = np.asarray(y_class)
+    n_splits = int(getattr(config, "MISCLASS_REPAIR_CV_SPLITS", 5))
+    class_counts = pd.Series(y).value_counts()
+    splits = min(n_splits, int(class_counts.min())) if len(class_counts) > 1 else 0
+    if splits < 2:
+        return df.iloc[0:0].copy()
+    use_ard = bool(getattr(config, "GP_MODEL_SELECTION_USE_ARD", False))
+    seed = int(getattr(config, "RANDOM_SEED", 42))
+    cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=seed)
+    oof_pred = np.full(len(y), -1, dtype=int)
+    for fold, (tr, va) in enumerate(cv.split(x_train, y)):
+        clf = fit_gpc_passfail(x_train[tr], y[tr], random_state=seed + fold, params=gp_params, use_ard=use_ard)
+        oof_pred[va] = clf.predict(x_train[va])
+    mis_mask = (oof_pred >= 0) & (oof_pred != y)
+    mis_df = df.loc[mis_mask].copy()
+    mis_df["oof_predicted_label"] = oof_pred[mis_mask]
+    return mis_df
+
+
 def reinforce_combo_sampling(
     selected: pd.DataFrame,
     scored_pool: pd.DataFrame,
@@ -1527,36 +1555,45 @@ def main():
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
 
     # === Misclassification repair scoring ===
-    # Score candidates by proximity to the previous iteration's holdout misclassified points.
+    # Score candidates by proximity to misclassified points.
+    # Source "cv" (default): out-of-fold misclassified TRAINING points -> holdout stays untouched.
+    # Source "holdout": previous iteration's holdout misclassified samples (metric-bias risk).
     scored["acq_misclass_repair"] = 0.0
     if getattr(config, "ENABLE_MISCLASS_REPAIR", False):
-        prev_itr_dirs = sorted(
-            [d for d in config.OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("Itr_")],
-            key=lambda x: int(x.name.split("_")[1]) if x.name.split("_")[1].isdigit() else 0,
-            reverse=True,
-        )
-        prev_misclass_df = None
-        prev_misclass_csv = None
-        if prev_itr_dirs:
-            prev_misclass_csv = prev_itr_dirs[0] / "Performance" / "holdout_misclassified_samples.csv"
-            if prev_misclass_csv.exists():
-                try:
-                    prev_misclass_df = pd.read_csv(prev_misclass_csv)
-                except Exception as e:
-                    print(f"[WARN] Could not read previous misclassified samples: {e}")
-        if prev_misclass_df is not None and len(prev_misclass_df):
+        repair_source = str(getattr(config, "MISCLASS_REPAIR_SOURCE", "cv")).lower()
+        misclass_points_df = None
+        if repair_source == "cv":
+            misclass_points_df = collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=tuned.get("gp_params"))
+            if len(misclass_points_df):
+                cv_misclass_csv = try_dir / "cv_misclassified_training_points.csv"
+                misclass_points_df.to_csv(cv_misclass_csv, index=False, encoding="utf-8-sig")
+                print(f"[INFO] Misclass repair (cv): {len(misclass_points_df)} out-of-fold misclassified training points -> {cv_misclass_csv}")
+        else:
+            prev_itr_dirs = sorted(
+                [d for d in config.OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("Itr_")],
+                key=lambda x: int(x.name.split("_")[1]) if x.name.split("_")[1].isdigit() else 0,
+                reverse=True,
+            )
+            if prev_itr_dirs:
+                prev_misclass_csv = prev_itr_dirs[0] / "Performance" / "holdout_misclassified_samples.csv"
+                if prev_misclass_csv.exists():
+                    try:
+                        misclass_points_df = pd.read_csv(prev_misclass_csv)
+                        print(f"[INFO] Misclass repair (holdout): {len(misclass_points_df)} points from {prev_misclass_csv}")
+                    except Exception as e:
+                        print(f"[WARN] Could not read previous misclassified samples: {e}")
+        if misclass_points_df is not None and len(misclass_points_df):
             scored["acq_misclass_repair"] = compute_misclass_repair_score(
                 scored,
-                prev_misclass_df,
+                misclass_points_df,
                 config.BASE_CONTINUOUS_COLS,
                 config.CONTINUOUS_BOUNDS,
                 combo_col="discrete_combo_id",
                 length_scale=getattr(config, "MISCLASS_REPAIR_LENGTH_SCALE", 0.15),
                 same_combo_only=getattr(config, "MISCLASS_REPAIR_SAME_COMBO_ONLY", True),
             )
-            print(f"[INFO] Misclass repair scoring: {len(prev_misclass_df)} misclassified points from {prev_misclass_csv}")
         else:
-            print("[INFO] Misclass repair: no previous misclassified samples found; bucket will be redistributed.")
+            print("[INFO] Misclass repair: no misclassified points found; bucket will be redistributed.")
 
     scored.nlargest(2000, "acq_boundary").to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
 
