@@ -7,13 +7,28 @@ def load_labeled_data(csv_path):
     if not path.exists():
         raise FileNotFoundError(f"Input CSV not found: {path.resolve()}")
     # Auto-detect delimiter so both CSV and TSV inputs are supported.
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        sample = f.read(4096)
+    # Try multiple encodings for both sniffing and reading.
+    encodings = ["utf-8-sig", "cp949", "euc-kr", "latin-1"]
+    sample = ""
+    for enc in encodings:
+        try:
+            with path.open("r", encoding=enc, newline="") as f:
+                sample = f.read(4096)
+            break
+        except UnicodeDecodeError:
+            continue
     try:
         delimiter = csv.Sniffer().sniff(sample, delimiters=[",", "\t", ";", "|"]).delimiter
-        return pd.read_csv(path, sep=delimiter)
     except csv.Error:
-        return pd.read_csv(path)
+        delimiter = ","
+    # Try reading with each encoding until success
+    for enc in encodings:
+        try:
+            return pd.read_csv(path, sep=delimiter, encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    # Final fallback with errors='replace' to avoid crash
+    return pd.read_csv(path, sep=delimiter, encoding="utf-8", errors="replace")
 
 def validate_required_columns(df, continuous_cols, discrete_cols, passfail_col, tmax_col, other_regression_cols=None, time_feature_cols=None):
     required = continuous_cols + discrete_cols + [passfail_col, tmax_col]
