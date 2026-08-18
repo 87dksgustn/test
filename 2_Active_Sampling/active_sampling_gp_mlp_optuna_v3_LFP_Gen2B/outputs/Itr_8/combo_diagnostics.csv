@@ -1,0 +1,3 @@
+﻿discrete_combo_id,B_Barrier_Type,D_Barrier_Outer_Type,n_total,n_notp,n_tp,notp_ratio,tp_ratio,notp_tmax_min,notp_tmax_mean,notp_tmax_max
+combo_001,Si1,PU,113,66,47,0.584070796460177,0.415929203539823,284.0430047,360.1696361227272,430.888746
+combo_002,Si1,Si1,87,46,41,0.5287356321839081,0.47126436781609193,290.2857717,367.16062713695663,434.7637791
