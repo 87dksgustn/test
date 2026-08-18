@@ -23,6 +23,33 @@ def compute_local_sparsity(x_candidate, x_train):
     dist, _ = nn.kneighbors(x_candidate)
     return safe_minmax_scale(dist.ravel())
 
+def compute_misclass_repair_score(candidate_df, misclass_df, base_cols, bounds, combo_col="discrete_combo_id", length_scale=0.15, same_combo_only=True):
+    """Score candidates by proximity to previous holdout misclassified points.
+
+    score = max over misclassified points of exp(-normalized_dist / length_scale),
+    optionally restricted to candidates sharing the same discrete combo.
+    """
+    n = len(candidate_df)
+    scores = np.zeros(n, dtype=float)
+    if misclass_df is None or len(misclass_df) == 0:
+        return scores
+    cols = [c for c in base_cols if c in misclass_df.columns and c in candidate_df.columns]
+    if not cols:
+        return scores
+    lo = np.array([bounds[c][0] for c in cols], dtype=float)
+    span = np.array([max(bounds[c][1] - bounds[c][0], 1e-12) for c in cols], dtype=float)
+    cand = (candidate_df[cols].to_numpy(dtype=float) - lo) / span
+    mis = (misclass_df[cols].to_numpy(dtype=float) - lo) / span
+    cand_combo = candidate_df[combo_col].to_numpy() if combo_col in candidate_df.columns else None
+    mis_combo = misclass_df[combo_col].to_numpy() if combo_col in misclass_df.columns else None
+    for j in range(len(mis)):
+        d = np.linalg.norm(cand - mis[j], axis=1)
+        s = np.exp(-d / max(float(length_scale), 1e-12))
+        if same_combo_only and cand_combo is not None and mis_combo is not None:
+            s = np.where(cand_combo == mis_combo[j], s, 0.0)
+        scores = np.maximum(scores, s)
+    return scores
+
 def compute_combo_priority(candidate_df, labeled_df, combo_col, min_samples_per_combo, max_samples_per_combo):
     counts = labeled_df[combo_col].value_counts().to_dict(); out = []
     for cid in candidate_df[combo_col].values:

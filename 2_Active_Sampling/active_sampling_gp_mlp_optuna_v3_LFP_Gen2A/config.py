@@ -4,8 +4,8 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_17_dataset.csv"
-FINAL_TEST_CSV = "Final_test_Dataset.csv"
+INPUT_CSV = "Itr_7_Dataset.csv"
+FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
 BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -24,7 +24,7 @@ DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
-TMAX_COL = "MaxT_Adj"        # Valid mainly for NoTP cases
+TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
@@ -42,53 +42,81 @@ NOTP_LABEL = 0
 PASS_LABEL = NOTP_LABEL
 FAIL_LABEL = TP_LABEL
 
+# A_Cell_D center policy
+A_CELL_D_CENTER = 15.6
+A_CELL_D_HALF_RANGE = 4.0
+A_CELL_D_MIN = A_CELL_D_CENTER - A_CELL_D_HALF_RANGE
+A_CELL_D_MAX = A_CELL_D_CENTER + A_CELL_D_HALF_RANGE
+A_CELL_D_BIN_STEP = 2.0
+A_CELL_D_BIN_EPS = 1e-6
+
 CONTINUOUS_BOUNDS = {
-    "A_Cell_D": (11.2, 19.2),
-    "C_Barrier_Thx": (0.25, 2.5),
+    "A_Cell_D": (A_CELL_D_MIN, A_CELL_D_MAX),
+    "C_Barrier_Thx": (0.5, 2.5),
     "E_Barrier_Outer_Thx": (1.1, 3.0),
     "F_ThermalResin_Thx": (0.5, 2.5),
     # Interaction term bounds (computed from base bounds)
-    # CellD_x_Resin: 11.2~19.2 × 0.5~2.5 = 5.6~48
+    # CellD_x_Resin: A_Cell_D range × 0.5~2.5
     # Barrier_x_Outer: 0.25~2.5 × 1.1~3.0 = 0.275~7.5
-    "CellD_x_Resin": (5.6, 48.0),
+    "CellD_x_Resin": (A_CELL_D_MIN * 0.5, A_CELL_D_MAX * 2.5),
     "Barrier_x_Outer": (0.275, 7.5),
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.
 EXCLUDED_REFERENCE_RANGES = {
-    "A_Cell_D": {"center": 15.6, "half_width": 0.01},
+    "A_Cell_D": {"center": A_CELL_D_CENTER, "half_width": 0.01},
     "C_Barrier_Thx": {"center": 0.85, "half_width": 0.01},
     "E_Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},
     "F_ThermalResin_Thx": {"center": 1.0, "half_width": 0.01},
 }
 
 DISCRETE_LEVELS = {
-    "B_Barrier_Type": ["Si1", "Si2", "Si3", "A1", "A2"],
-    "D_Barrier_Outer_Type": ["PU", "Si1", "Si2", "Si3"],
+    "B_Barrier_Type": ["Si1"],
+    "D_Barrier_Outer_Type": ["PU", "Si1"],
     # "I_Cell_Barrier": ["1CP", "2CP"],
 }
 S_PREFIX = "S"
 
-CURRENT_LEVEL_TARGET_TOTAL = 636
-INITIAL_TOTAL = 140
+CURRENT_LEVEL_TARGET_TOTAL = 300
+INITIAL_TOTAL = 60
 ADDITIONAL_TOTAL = CURRENT_LEVEL_TARGET_TOTAL - INITIAL_TOTAL
 
-BATCH_SIZE = 23
-CANDIDATES_PER_COMBO = 3000
+BATCH_SIZE = 20
+CANDIDATES_PER_COMBO = 42000
 
-MIN_SAMPLES_PER_COMBO = 8
-MAX_SAMPLES_PER_COMBO = 60
+MIN_SAMPLES_PER_COMBO = 1
+MAX_SAMPLES_PER_COMBO = 10**9
 
 BUCKET_RATIO = {
-    "boundary": 0.70,
+    "boundary": 0.60,
     "notp_high_tmax": 0.20,  # Increased for Tmax R2 recovery
-    "uncertainty_sparse": 0.07,
-    "random_check": 0.03,
+    "misclass_repair": 0.10,  # Candidates near previous holdout misclassified points
+    "uncertainty_sparse": 0.05,
+    "random_check": 0.05,  # Raised from 0.03: confidently-wrong regions need exploration
 }
+
+# === Misclassification repair sampling ===
+# Reserve batch slots for new candidates near the previous iteration's
+# holdout misclassified points (confidently-wrong regions are invisible to
+# boundary/uncertainty acquisition, so they must be targeted explicitly).
+ENABLE_MISCLASS_REPAIR = True
+# Source of misclassified points used for repair scoring:
+# - "cv": out-of-fold misclassified TRAINING points (recommended; keeps holdout
+#         untouched by the sampling policy -> no adaptive overfitting to holdout)
+# - "holdout": previous iteration's holdout misclassified samples (biases
+#              holdout metrics optimistically; use only if CV signal is too weak)
+MISCLASS_REPAIR_SOURCE = "cv"
+# Number of CV folds for out-of-fold misclassification detection
+MISCLASS_REPAIR_CV_SPLITS = 5
+# Distance kernel length scale in bounds-normalized feature space:
+# score = exp(-dist / length_scale). Smaller = tighter around misclassified points.
+MISCLASS_REPAIR_LENGTH_SCALE = 0.15
+# Only give score to candidates sharing the discrete combo of the misclassified point
+MISCLASS_REPAIR_SAME_COMBO_ONLY = True
 
 # === Combo Reinforcement Sampling ===
 # Automatically add extra samples for underrepresented or misclassified combos
-ENABLE_COMBO_REINFORCE = True
+ENABLE_COMBO_REINFORCE = False
 # Number of extra samples per lacking combo (combo with 0 samples in current batch)
 REINFORCE_LACKING_COMBO_COUNT = 3
 # Number of extra samples per misclassified combo (from holdout evaluation)
@@ -109,7 +137,7 @@ BOUNDARY_WEIGHTS_GP = {
 # - "none": keep legacy behavior (clf_uncertainty=0 for GP path)
 # - "ensemble_std": train bootstrap GP classifiers and use std of p_tp
 GP_CLF_UNCERTAINTY_MODE = "ensemble_std"
-GP_CLF_ENSEMBLE_SIZE = 1  # Reduced for speed with ARD; increase to 5 for production
+GP_CLF_ENSEMBLE_SIZE = 5  # Reduced for speed with ARD; increase to 5 for production
 GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
@@ -192,34 +220,40 @@ BUCKET_PTP_BOUNDS = {
 #   TP_NoTP==TP_LABEL count per Cell_D bin / total TP_NoTP==TP_LABEL count
 NOTP_HIGHTMAX_USE_TP1_CELLD_RATIO = True
 NOTP_HIGHTMAX_CELLD_COL = "A_Cell_D"
-NOTP_HIGHTMAX_CELLD_BINS = [11.2, 13.2, 15.2, 17.2, 19.200001]
-NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["11.2-13.2", "13.2-15.2", "15.2-17.2", "17.2-19.2"]
+NOTP_HIGHTMAX_CELLD_BINS = [
+    A_CELL_D_MIN,
+    A_CELL_D_MIN + A_CELL_D_BIN_STEP,
+    A_CELL_D_MIN + A_CELL_D_BIN_STEP * 2,
+    A_CELL_D_MIN + A_CELL_D_BIN_STEP * 3,
+    A_CELL_D_MAX + A_CELL_D_BIN_EPS,
+]
+NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["11.6-13.6", "13.6-15.6", "15.6-17.6", "17.6-19.6"]
 
 # Bucket Cell_D quota mode:
-# - "hybrid_baseline": baseline-centered fixed zone ratios (recommended for operational baseline around 12.4)
+# - "hybrid_baseline": baseline-centered fixed zone ratios
 # - "tp_ratio_only": TP_NoTP==1 ratio-only quota by Cell_D bins
 # - "off": disable bucket bin quotas
 BUCKET_CELLD_QUOTA_MODE = "tp_ratio_only"
 
 # Common TP-ratio quota settings (used in tp_ratio_only mode)
 TP_RATIO_CELLD_COL = "A_Cell_D"
-TP_RATIO_CELLD_BINS = [11.2, 13.2, 15.2, 17.2, 19.200001]
-TP_RATIO_CELLD_BIN_LABELS = ["11.2-13.2", "13.2-15.2", "15.2-17.2", "17.2-19.2"]
+TP_RATIO_CELLD_BINS = list(NOTP_HIGHTMAX_CELLD_BINS)
+TP_RATIO_CELLD_BIN_LABELS = list(NOTP_HIGHTMAX_CELLD_BIN_LABELS)
 
 # Hybrid baseline-centered quota settings
-BASELINE_CELLD = 15.6
+BASELINE_CELLD = A_CELL_D_CENTER
 HYBRID_CELLD_COL = "A_Cell_D"
-HYBRID_CELLD_BINS = [11.2, 15.0, 16.2, 19.200001]
-HYBRID_CELLD_BIN_LABELS = ["low(11.2-15.0)", "near(15.0-16.2)", "high(16.2-19.2)"]
+HYBRID_CELLD_BINS = [A_CELL_D_MIN, BASELINE_CELLD - 0.6, BASELINE_CELLD + 0.6, A_CELL_D_MAX + A_CELL_D_BIN_EPS]
+HYBRID_CELLD_BIN_LABELS = ["low(11.6-15.0)", "near(15.0-16.2)", "high(16.2-19.6)"]
 HYBRID_BOUNDARY_ZONE_RATIO = {
-    "low(11.2-15.0)": 4,
+    "low(11.6-15.0)": 4,
     "near(15.0-16.2)": 8,
-    "high(16.2-19.2)": 5,
+    "high(16.2-19.6)": 5,
 }
 HYBRID_NOTP_HIGHTMAX_ZONE_RATIO = {
-    "low(11.2-15.0)": 2,
+    "low(11.6-15.0)": 2,
     "near(15.0-16.2)": 4,
-    "high(16.2-19.2)": 2,
+    "high(16.2-19.6)": 2,
 }
 
 # ============================================================
@@ -252,7 +286,7 @@ HYBRID_EXTRA_METRIC = "rmse"        # Metric to compare GP vs MLP for each extra
 HYBRID_CLASSIFIER_MARGIN = 0.01    # Weighted score improvement required
 HYBRID_REGRESSION_MARGIN = 0.02    # Relative RMSE improvement required (2%)
 
-MLP_MIN_TOTAL_SAMPLES = 350
+MLP_MIN_TOTAL_SAMPLES = 220
 MLP_MIN_CLASS_RATIO = 0.30
 MLP_MIN_PASS_SAMPLES = int(MLP_MIN_TOTAL_SAMPLES * MLP_MIN_CLASS_RATIO)
 MLP_MIN_FAIL_SAMPLES = int(MLP_MIN_TOTAL_SAMPLES * MLP_MIN_CLASS_RATIO)
@@ -307,12 +341,14 @@ UNCERTAINTY_TARGET_HIGH = 0.35
 BUCKET_RATIO_MIN = {
     "boundary": 0.50,
     "notp_high_tmax": 0.08,
+    "misclass_repair": 0.05,
     "uncertainty_sparse": 0.02,
     "random_check": 0.02,
 }
 BUCKET_RATIO_MAX = {
     "boundary": 0.85,
     "notp_high_tmax": 0.28,
+    "misclass_repair": 0.15,
     "uncertainty_sparse": 0.18,
     "random_check": 0.10,
 }
@@ -336,17 +372,17 @@ ENABLE_OPTUNA_AUTO = True
 # If Optuna is not installed, code automatically skips tuning.
 # pip install optuna
 
-GP_OPTUNA_MIN_TOTAL_SAMPLES = 100
+GP_OPTUNA_MIN_TOTAL_SAMPLES = 50
 GP_OPTUNA_MIN_PASS_SAMPLES = 20
 GP_OPTUNA_MIN_FAIL_SAMPLES = 20
 GP_OPTUNA_N_TRIALS = 30
 GP_OPTUNA_TIMEOUT_SEC = None
 
-TMAX_OPTUNA_MIN_PASS_SAMPLES = 50
+TMAX_OPTUNA_MIN_PASS_SAMPLES = 30
 TMAX_OPTUNA_N_TRIALS = 25
 TMAX_OPTUNA_TIMEOUT_SEC = None
 
-MLP_OPTUNA_MIN_TOTAL_SAMPLES = 350
+MLP_OPTUNA_MIN_TOTAL_SAMPLES = 220
 MLP_OPTUNA_MIN_CLASS_RATIO = 0.30
 MLP_OPTUNA_MIN_PASS_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)
 MLP_OPTUNA_MIN_FAIL_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)

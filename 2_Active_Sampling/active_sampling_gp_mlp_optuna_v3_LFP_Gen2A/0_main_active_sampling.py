@@ -22,7 +22,7 @@ from diagnostics import combo_diagnostics
 from optuna_tuning import maybe_tune_models
 from model_selector import select_and_fit_model
 from evaluation import fold_metrics_to_df
-from acquisition import compute_acquisition_scores
+from acquisition import compute_acquisition_scores, compute_misclass_repair_score
 from batch_selector import bucket_counts, select_batch
 
 logging.basicConfig(
@@ -40,6 +40,34 @@ def add_interaction_terms(df, interaction_terms):
         if col1 in df.columns and col2 in df.columns:
             df[new_col] = df[col1].astype(float) * df[col2].astype(float)
     return df
+
+
+def collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=None):
+    """Collect out-of-fold misclassified TRAINING points via stratified CV.
+
+    Uses only training data, so the sampling policy never sees holdout labels
+    (avoids adaptive overfitting to the holdout set).
+    """
+    from sklearn.model_selection import StratifiedKFold
+    from models_gp import fit_gpc_passfail
+
+    y = np.asarray(y_class)
+    n_splits = int(getattr(config, "MISCLASS_REPAIR_CV_SPLITS", 5))
+    class_counts = pd.Series(y).value_counts()
+    splits = min(n_splits, int(class_counts.min())) if len(class_counts) > 1 else 0
+    if splits < 2:
+        return df.iloc[0:0].copy()
+    use_ard = bool(getattr(config, "GP_MODEL_SELECTION_USE_ARD", False))
+    seed = int(getattr(config, "RANDOM_SEED", 42))
+    cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=seed)
+    oof_pred = np.full(len(y), -1, dtype=int)
+    for fold, (tr, va) in enumerate(cv.split(x_train, y)):
+        clf = fit_gpc_passfail(x_train[tr], y[tr], random_state=seed + fold, params=gp_params, use_ard=use_ard)
+        oof_pred[va] = clf.predict(x_train[va])
+    mis_mask = (oof_pred >= 0) & (oof_pred != y)
+    mis_df = df.loc[mis_mask].copy()
+    mis_df["oof_predicted_label"] = oof_pred[mis_mask]
+    return mis_df
 
 
 def reinforce_combo_sampling(
@@ -1480,7 +1508,6 @@ def main():
     validate_passfail_labels(df, config.TPNoTP_COL, config.PASS_LABEL, config.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(config.DISCRETE_LEVELS, config.DISCRETE_COLS, config.S_PREFIX)
     print(f"[INFO] Valid discrete combinations: {len(valid_combos)}")
-    if len(valid_combos) != 28: print("[WARN] Valid combo count is not 28. Check DISCRETE_LEVELS and constraint logic.")
     df = attach_discrete_combo_id(df, valid_combos, config.DISCRETE_COLS)
     diag = combo_diagnostics(df, valid_combos, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.PASS_LABEL, config.FAIL_LABEL)
     diag.to_csv(output_diagnostics_csv, index=False, encoding="utf-8-sig")
@@ -1526,6 +1553,48 @@ def main():
     effective_boundary_weights = make_effective_boundary_weights(config, getattr(selected_model, "kind", "gp"), df)
     scoring_cfg = build_scoring_config(config, getattr(selected_model, "kind", "gp"), effective_boundary_weights)
     scored = compute_acquisition_scores(pool, df, x_candidate, x_train, selected_model, scoring_cfg)
+
+    # === Misclassification repair scoring ===
+    # Score candidates by proximity to misclassified points.
+    # Source "cv" (default): out-of-fold misclassified TRAINING points -> holdout stays untouched.
+    # Source "holdout": previous iteration's holdout misclassified samples (metric-bias risk).
+    scored["acq_misclass_repair"] = 0.0
+    if getattr(config, "ENABLE_MISCLASS_REPAIR", False):
+        repair_source = str(getattr(config, "MISCLASS_REPAIR_SOURCE", "cv")).lower()
+        misclass_points_df = None
+        if repair_source == "cv":
+            misclass_points_df = collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=tuned.get("gp_params"))
+            if len(misclass_points_df):
+                cv_misclass_csv = try_dir / "cv_misclassified_training_points.csv"
+                misclass_points_df.to_csv(cv_misclass_csv, index=False, encoding="utf-8-sig")
+                print(f"[INFO] Misclass repair (cv): {len(misclass_points_df)} out-of-fold misclassified training points -> {cv_misclass_csv}")
+        else:
+            prev_itr_dirs = sorted(
+                [d for d in config.OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("Itr_")],
+                key=lambda x: int(x.name.split("_")[1]) if x.name.split("_")[1].isdigit() else 0,
+                reverse=True,
+            )
+            if prev_itr_dirs:
+                prev_misclass_csv = prev_itr_dirs[0] / "Performance" / "holdout_misclassified_samples.csv"
+                if prev_misclass_csv.exists():
+                    try:
+                        misclass_points_df = pd.read_csv(prev_misclass_csv)
+                        print(f"[INFO] Misclass repair (holdout): {len(misclass_points_df)} points from {prev_misclass_csv}")
+                    except Exception as e:
+                        print(f"[WARN] Could not read previous misclassified samples: {e}")
+        if misclass_points_df is not None and len(misclass_points_df):
+            scored["acq_misclass_repair"] = compute_misclass_repair_score(
+                scored,
+                misclass_points_df,
+                config.BASE_CONTINUOUS_COLS,
+                config.CONTINUOUS_BOUNDS,
+                combo_col="discrete_combo_id",
+                length_scale=getattr(config, "MISCLASS_REPAIR_LENGTH_SCALE", 0.15),
+                same_combo_only=getattr(config, "MISCLASS_REPAIR_SAME_COMBO_ONLY", True),
+            )
+        else:
+            print("[INFO] Misclass repair: no misclassified points found; bucket will be redistributed.")
+
     scored.nlargest(2000, "acq_boundary").to_csv(output_scored_pool_csv, index=False, encoding="utf-8-sig")
 
     # === Dynamic batch size & bucket ratio control ===
@@ -1552,6 +1621,12 @@ def main():
         effective_bucket_ratio = dict(config.BUCKET_RATIO)
         if bucket_ratio_mode == "shadow":
             print(f"[INFO] BUCKET_RATIO_MODE=shadow -> using config bucket_ratio, recommended: {bucket_ratio_rec.get('recommended_bucket_ratio')}")
+
+    # Drop misclass_repair bucket when there is nothing to repair (or disabled);
+    # bucket_counts normalizes by ratio sum, so its share is redistributed proportionally.
+    if float(effective_bucket_ratio.get("misclass_repair", 0.0)) > 0.0 and float(scored["acq_misclass_repair"].max()) <= 0.0:
+        dropped_ratio = effective_bucket_ratio.pop("misclass_repair")
+        print(f"[INFO] misclass_repair ratio ({dropped_ratio}) redistributed to remaining buckets.")
 
     bucket_target_counts = bucket_counts(effective_batch_size, effective_bucket_ratio)
     bucket_bin_quota_rules = build_bucket_bin_quota_rules(df, config, bucket_target_counts)
@@ -1608,7 +1683,7 @@ def main():
     base_cont = getattr(config, "BASE_CONTINUOUS_COLS", config.CONTINUOUS_COLS)
     interaction_cols = [t[2] for t in getattr(config, "INTERACTION_TERMS", [])]
     front = ["sampling_rank", "selected_bucket", "selected_model_kind"] + list(base_cont) + config.DISCRETE_COLS + ["discrete_combo_id"]
-    score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse"]
+    score_cols = ["p_tp", "p_notp", "boundary_score", "clf_uncertainty_raw", "clf_uncertainty_scaled", "tmax_pred_given_notp", "tmax_std_given_notp", "notp_window_score", "local_sparsity", "combo_priority", "acq_boundary", "acq_notp_high_tmax", "acq_uncertainty_sparse", "acq_misclass_repair"]
     # Only include interaction columns that exist in the dataframe
     interaction_cols = [c for c in interaction_cols if c in selected.columns]
     selected = selected[front + score_cols + interaction_cols]
@@ -1675,14 +1750,14 @@ def main():
                     if row["error_type"] == "FP (false TP)":
                         if p_tp_val > 0.7:
                             notes.append("high confidence FP (p_tp>{:.2f})".format(p_tp_val))
-                        if cell_d is not None and cell_d < 13.2:
+                        if cell_d is not None and cell_d < 10:
                             notes.append("low Cell_D={:.1f}".format(cell_d))
                     else:  # FN
                         if 0.4 <= p_tp_val <= 0.6:
                             notes.append("boundary region (p_tp={:.2f})".format(p_tp_val))
                         elif p_tp_val < 0.4:
                             notes.append("low p_tp={:.2f}".format(p_tp_val))
-                        if cell_d is not None and cell_d > 15.2:
+                        if cell_d is not None and cell_d > 12:
                             notes.append("high Cell_D={:.1f}".format(cell_d))
                     if barrier_type and outer_type:
                         notes.append(f"combo={barrier_type}-{outer_type}")
