@@ -1,0 +1,2 @@
+﻿predicted_at,predict_mode,A_Cell_D,C_Barrier_Thx,E_Barrier_Outer_Thx,F_ThermalResin_Thx,B_Barrier_Type,D_Barrier_Outer_Type,p_tp,p_notp,predicted_label,tmax_pred,tmax_std,clf_uncertainty,MaxT_Adj_Y_pred,MaxT_Adj_Y_std,MaxT_Adj_Z_pred,MaxT_Adj_Z_std,Max_Power_pred,Max_Power_std
+2026-08-19 17:32:53,single,15.0,1.08,1.1,0.5,Si1,PU,0.5553328394889832,0.44466716051101685,TP,,,0.38977211713790894,2.1854997191151835e-05,0.0009901529948580904,0.05516713427633976,0.0004479570201850217,,
