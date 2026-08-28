@@ -4,23 +4,31 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Initial_Dataset.csv"
+INPUT_CSV = "Itr_18_Dataset.csv"
 FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
-BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
+# NOTE: E_Barrier_Outer_Thx is defined but disabled for this study (uncomment to enable).
+BASE_CONTINUOUS_COLS = [
+    "A_Cell_D",
+    "C_Barrier_Thx",
+    # "E_Barrier_Outer_Thx",
+    "F_ThermalResin_Thx",
+    "G_Coolant_LPM",
+]
 
 # Interaction terms: (col1, col2, new_col_name)
 # Set to empty list [] to disable interaction terms
 INTERACTION_TERMS = [
     ("A_Cell_D", "F_ThermalResin_Thx", "CellD_x_Resin"),
-    ("C_Barrier_Thx", "E_Barrier_Outer_Thx", "Barrier_x_Outer"),
+    # ("C_Barrier_Thx", "E_Barrier_Outer_Thx", "Barrier_x_Outer"),  # disabled: E_Barrier_Outer_Thx off
 ]
 
 # Final continuous columns = base + interaction
 CONTINUOUS_COLS = BASE_CONTINUOUS_COLS + [t[2] for t in INTERACTION_TERMS]
 
-DISCRETE_COLS = ["B_Barrier_Type", "D_Barrier_Outer_Type"]
+# NOTE: D_Barrier_Outer_Type is defined but disabled for this study (uncomment to enable).
+DISCRETE_COLS = ["B_Barrier_Type"]  # , "D_Barrier_Outer_Type"
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
@@ -42,57 +50,50 @@ NOTP_LABEL = 0
 PASS_LABEL = NOTP_LABEL
 FAIL_LABEL = TP_LABEL
 
-# A_Cell_D center policy
-A_CELL_D_CENTER = 15.6
-A_CELL_D_HALF_RANGE = 4.0
-A_CELL_D_MIN = A_CELL_D_CENTER - 3.6
-A_CELL_D_MAX = A_CELL_D_CENTER + 4.4
-A_CELL_D_BIN_STEP = 2.0
-A_CELL_D_BIN_EPS = 1e-6
-
 CONTINUOUS_BOUNDS = {
-    "A_Cell_D": (A_CELL_D_MIN, A_CELL_D_MAX),
-    "C_Barrier_Thx": (0.25, 2.0),
-    "E_Barrier_Outer_Thx": (1.1, 3.0),
-    "F_ThermalResin_Thx": (0.5, 2.5),
-    # Interaction term bounds (computed from base bounds)
-    # CellD_x_Resin: A_Cell_D range × 0.5~2.5
-    # Barrier_x_Outer: 0.25~2.5 × 1.1~3.0 = 0.275~7.5
-    "CellD_x_Resin": (A_CELL_D_MIN * 0.5, A_CELL_D_MAX * 2.5),
-    "Barrier_x_Outer": (0.275, 7.5),
+    "A_Cell_D": (10.0, 16.0),
+    "C_Barrier_Thx": (1.0, 3.0),
+    # "E_Barrier_Outer_Thx": (1.1, 3.0),  # disabled for this study
+    "F_ThermalResin_Thx": (1.0, 3.0),
+    "G_Coolant_LPM": (0.0, 30.0),
+    # Interaction term bounds (manual entry; NOT auto-updated when base bounds change)
+    # CellD_x_Resin = A_Cell_D * F_ThermalResin_Thx: 10~16 × 1.0~3.0 = 10~48
+    "CellD_x_Resin": (10.0, 48.0),
+    # "Barrier_x_Outer": (0.275, 7.5),  # disabled with E_Barrier_Outer_Thx
 }
 
 # Applied only to newly generated candidate points, not existing CFD data.
 EXCLUDED_REFERENCE_RANGES = {
-    "A_Cell_D": {"center": A_CELL_D_CENTER, "half_width": 0.01},
-    "C_Barrier_Thx": {"center": 0.85, "half_width": 0.01},
-    "E_Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},
-    "F_ThermalResin_Thx": {"center": 1.0, "half_width": 0.01},
+    "A_Cell_D": {"center": 13.385, "half_width": 0.01},
+    "C_Barrier_Thx": {"center": 2.0, "half_width": 0.01},
+    # "E_Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},  # disabled for this study
+    "F_ThermalResin_Thx": {"center": 2.0, "half_width": 0.01},
+    "G_Coolant_LPM": {"center": 20.0, "half_width": 0.0},
 }
 
 DISCRETE_LEVELS = {
-    "B_Barrier_Type": ["Si1"],
-    "D_Barrier_Outer_Type": ["PU", "Si1"],
+    "B_Barrier_Type": ["ETI"],
+    # "D_Barrier_Outer_Type": ["PU", "Si1"],  # disabled for this study
     # "I_Cell_Barrier": ["1CP", "2CP"],
 }
 S_PREFIX = "S"
 
-CURRENT_LEVEL_TARGET_TOTAL = 200
+CURRENT_LEVEL_TARGET_TOTAL = 300
 INITIAL_TOTAL = 60
 ADDITIONAL_TOTAL = CURRENT_LEVEL_TARGET_TOTAL - INITIAL_TOTAL
 
-BATCH_SIZE = 18
-CANDIDATES_PER_COMBO = 22000
+BATCH_SIZE = 20
+CANDIDATES_PER_COMBO = 42000
 
 MIN_SAMPLES_PER_COMBO = 1
 MAX_SAMPLES_PER_COMBO = 10**9
 
 BUCKET_RATIO = {
-    "boundary": 0.72,
-    "notp_high_tmax": 0.14,
-    "misclass_repair": 0.06,  # CV misclassified regions near decision boundary
+    "boundary": 0.60,
+    "notp_high_tmax": 0.20,  # Increased for Tmax R2 recovery
+    "misclass_repair": 0.10,  # Candidates near previous holdout misclassified points
     "uncertainty_sparse": 0.05,
-    "random_check": 0.03,
+    "random_check": 0.05,  # Raised from 0.03: confidently-wrong regions need exploration
 }
 
 # === Misclassification repair sampling ===
@@ -127,17 +128,17 @@ REINFORCE_MAX_TOTAL = 15
 REINFORCE_SCORE_COL = "acq_boundary"
 
 BOUNDARY_WEIGHTS_GP = {
-    "boundary": 0.70,
+    "boundary": 0.85,
     "clf_uncertainty": 0.00,
     "local_sparsity": 0.15,
-    "combo_priority": 0.15,
+    "combo_priority": 0.00,  # single discrete level -> combo term is constant (disabled)
 }
 
 # GP classifier uncertainty mode:
 # - "none": keep legacy behavior (clf_uncertainty=0 for GP path)
 # - "ensemble_std": train bootstrap GP classifiers and use std of p_tp
 GP_CLF_UNCERTAINTY_MODE = "ensemble_std"
-GP_CLF_ENSEMBLE_SIZE = 3  # Faster uncertainty estimate under tight iteration time
+GP_CLF_ENSEMBLE_SIZE = 5  # Reduced for speed with ARD; increase to 5 for production
 GP_CLF_ENSEMBLE_SAMPLE_RATIO = 0.8
 GP_CLF_ENSEMBLE_STRATIFIED = True
 
@@ -168,42 +169,42 @@ ADAPTIVE_BOUNDARY_COVERAGE_FULL_MIN_NORM_RANGE = 0.90
 ADAPTIVE_BOUNDARY_COVERAGE_FULL_MEAN_NORM_RANGE = 0.93
 
 BOUNDARY_WEIGHTS_MLP = {
-    "boundary": 0.55,
+    "boundary": 0.70,
     "clf_uncertainty": 0.15,
     "local_sparsity": 0.15,
-    "combo_priority": 0.15,
+    "combo_priority": 0.00,  # single discrete level -> combo term is constant (disabled)
 }
 
 NOTP_HIGH_TMAX_WEIGHTS = {
-    "tmax": 0.70,  # Ver3: notp_window ?쒓굅遺??닿? (0.40 ??0.70)
+    "tmax": 0.80,  # Ver3: notp_window ?쒓굅遺??닿? (0.40 ??0.70)
     "notp_window": 0.00,  # Ver3: 0.25 吏묒쨷 臾댁쓽誘? ?쒓굅
     "tmax_uncertainty": 0.10,
     "local_sparsity": 0.10,
-    "combo_priority": 0.10,
+    "combo_priority": 0.00,  # single discrete level -> combo term is constant (disabled)
 }
 
 UNCERTAINTY_SPARSE_WEIGHTS = {
-    "clf_uncertainty": 0.35,
-    "tmax_uncertainty": 0.35,
-    "local_sparsity": 0.15,
-    "combo_priority": 0.15,
+    "clf_uncertainty": 0.40,
+    "tmax_uncertainty": 0.40,
+    "local_sparsity": 0.20,
+    "combo_priority": 0.00,  # single discrete level -> combo term is constant (disabled)
 }
 
 NOTP_WINDOW_LOW = 0.60
 NOTP_WINDOW_HIGH = 0.90
 NOTP_WINDOW_CENTER = 0.75
-MIN_BATCH_DISTANCE = 0.10
+MIN_BATCH_DISTANCE = 0.12
 # Apply stricter spacing for specific buckets during selection.
 BUCKET_DISTANCE_MULTIPLIER = {
     "notp_high_tmax": 3.0,
 }
 BUCKET_LOCAL_DISTANCE_RULES = {
     "boundary": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_Coolant_LPM"],
         "min_dist": 0.10,
     },
     "notp_high_tmax": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_Coolant_LPM"],
         "min_dist": 0.22,
     }
 }
@@ -211,7 +212,7 @@ BUCKET_LOCAL_DISTANCE_RULES = {
 # Optional hard p_tp bounds by bucket.
 # Candidates outside each bucket range are skipped during greedy selection.
 BUCKET_PTP_BOUNDS = {
-    "boundary": {"min": 0.40, "max": 0.60},
+    "boundary": {"min": 0.45, "max": 0.55},
     "notp_high_tmax": {"min": 0.10, "max": 0.50},
 }
 
@@ -220,40 +221,34 @@ BUCKET_PTP_BOUNDS = {
 #   TP_NoTP==TP_LABEL count per Cell_D bin / total TP_NoTP==TP_LABEL count
 NOTP_HIGHTMAX_USE_TP1_CELLD_RATIO = True
 NOTP_HIGHTMAX_CELLD_COL = "A_Cell_D"
-NOTP_HIGHTMAX_CELLD_BINS = [
-    A_CELL_D_MIN,
-    A_CELL_D_MIN + A_CELL_D_BIN_STEP,
-    A_CELL_D_MIN + A_CELL_D_BIN_STEP * 2,
-    A_CELL_D_MIN + A_CELL_D_BIN_STEP * 3,
-    A_CELL_D_MAX + A_CELL_D_BIN_EPS,
-]
-NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["11.6-13.6", "13.6-15.6", "15.6-17.6", "17.6-19.6"]
+NOTP_HIGHTMAX_CELLD_BINS = [8.0, 10.0, 12.0, 14.0, 16.000001]
+NOTP_HIGHTMAX_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
 
 # Bucket Cell_D quota mode:
-# - "hybrid_baseline": baseline-centered fixed zone ratios
+# - "hybrid_baseline": baseline-centered fixed zone ratios (recommended for operational baseline around 12.4)
 # - "tp_ratio_only": TP_NoTP==1 ratio-only quota by Cell_D bins
 # - "off": disable bucket bin quotas
 BUCKET_CELLD_QUOTA_MODE = "tp_ratio_only"
 
 # Common TP-ratio quota settings (used in tp_ratio_only mode)
 TP_RATIO_CELLD_COL = "A_Cell_D"
-TP_RATIO_CELLD_BINS = list(NOTP_HIGHTMAX_CELLD_BINS)
-TP_RATIO_CELLD_BIN_LABELS = list(NOTP_HIGHTMAX_CELLD_BIN_LABELS)
+TP_RATIO_CELLD_BINS = [8.0, 10.0, 12.0, 14.0, 16.000001]
+TP_RATIO_CELLD_BIN_LABELS = ["8-10", "10-12", "12-14", "14-16"]
 
 # Hybrid baseline-centered quota settings
-BASELINE_CELLD = A_CELL_D_CENTER
+BASELINE_CELLD = 12.4
 HYBRID_CELLD_COL = "A_Cell_D"
-HYBRID_CELLD_BINS = [A_CELL_D_MIN, BASELINE_CELLD - 0.6, BASELINE_CELLD + 0.6, A_CELL_D_MAX + A_CELL_D_BIN_EPS]
-HYBRID_CELLD_BIN_LABELS = ["low(11.6-15.0)", "near(15.0-16.2)", "high(16.2-19.6)"]
+HYBRID_CELLD_BINS = [8.0, 11.8, 13.0, 16.000001]
+HYBRID_CELLD_BIN_LABELS = ["low(8-11.8)", "near(11.8-13.0)", "high(13-16)"]
 HYBRID_BOUNDARY_ZONE_RATIO = {
-    "low(11.6-15.0)": 4,
-    "near(15.0-16.2)": 8,
-    "high(16.2-19.6)": 5,
+    "low(8-11.8)": 4,
+    "near(11.8-13.0)": 8,
+    "high(13-16)": 5,
 }
 HYBRID_NOTP_HIGHTMAX_ZONE_RATIO = {
-    "low(11.6-15.0)": 2,
-    "near(15.0-16.2)": 4,
-    "high(16.2-19.6)": 2,
+    "low(8-11.8)": 2,
+    "near(11.8-13.0)": 4,
+    "high(13-16)": 2,
 }
 
 # ============================================================
@@ -313,10 +308,6 @@ MODEL_COMPARE_CV_WEIGHT = 0.30
 MODEL_COMPARE_HOLDOUT_WEIGHT = 0.70
 MODEL_COMPARE_HOLDOUT_TEST_SIZE = 0.20
 
-# Temporary switch: skip holdout scoring/plots while preserving code path.
-# Set True when final test evaluation is needed again.
-ENABLE_HOLDOUT_EVAL = False
-
 # Batch size auto-recommendation settings
 BATCH_SIZE_DECISION_WINDOW = 3  # Number of recent iterations to consider
 BATCH_SIZE_MIN = 16
@@ -331,7 +322,7 @@ BATCH_SIZE_STEP_DOWN = 5
 # shadow: use configured values but compute and log recommendations
 # auto: apply recommended values automatically
 BATCH_SIZE_MODE = "shadow"  # Changed from auto for stability
-BUCKET_RATIO_MODE = "manual"
+BUCKET_RATIO_MODE = "auto"
 
 # Bucket ratio dynamic adjustment parameters
 BUCKET_RATIO_DECISION_WINDOW = 3
@@ -377,20 +368,20 @@ ENABLE_OPTUNA_AUTO = True
 # pip install optuna
 
 GP_OPTUNA_MIN_TOTAL_SAMPLES = 50
-GP_OPTUNA_MIN_PASS_SAMPLES = 15  # Lowered so GP classifier tuning runs with NoTP=16
-GP_OPTUNA_MIN_FAIL_SAMPLES = 15
-GP_OPTUNA_N_TRIALS = 14
+GP_OPTUNA_MIN_PASS_SAMPLES = 20
+GP_OPTUNA_MIN_FAIL_SAMPLES = 20
+GP_OPTUNA_N_TRIALS = 30
 GP_OPTUNA_TIMEOUT_SEC = None
 
 TMAX_OPTUNA_MIN_PASS_SAMPLES = 30
-TMAX_OPTUNA_N_TRIALS = 12
+TMAX_OPTUNA_N_TRIALS = 25
 TMAX_OPTUNA_TIMEOUT_SEC = None
 
 MLP_OPTUNA_MIN_TOTAL_SAMPLES = 220
 MLP_OPTUNA_MIN_CLASS_RATIO = 0.30
 MLP_OPTUNA_MIN_PASS_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)
 MLP_OPTUNA_MIN_FAIL_SAMPLES = int(MLP_OPTUNA_MIN_TOTAL_SAMPLES * MLP_OPTUNA_MIN_CLASS_RATIO)
-MLP_OPTUNA_N_TRIALS = 10
+MLP_OPTUNA_N_TRIALS = 20
 MLP_OPTUNA_TIMEOUT_SEC = None
 
 # Hard-gate + classification-first objective for MLP Optuna.
