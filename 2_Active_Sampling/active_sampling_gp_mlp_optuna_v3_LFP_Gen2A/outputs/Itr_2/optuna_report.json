@@ -1,0 +1,29 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": false,
+    "mlp_optuna_eligible": false,
+    "n_total": 75,
+    "n_notp": 25,
+    "n_tp": 50
+  },
+  "gp": {
+    "best_value": 0.8460942705586959,
+    "n_trials": 14,
+    "best_params": {
+      "kernel": "Matern32",
+      "constant": 1.5751320499779735,
+      "length_scale": 0.8066708658064159
+    },
+    "use_ard_in_optuna": false
+  },
+  "mlp": {
+    "skipped": true,
+    "reason": "MLP Optuna eligibility conditions not met."
+  },
+  "tmax": {
+    "skipped": true,
+    "reason": "Tmax Optuna eligibility conditions not met."
+  }
+}

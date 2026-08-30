@@ -610,7 +610,7 @@ def save_model_compare_cv_barplot(selection_report, output_png):
     plt.close(fig)
     return True
 
-def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg):
+def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg, source_label="Holdout"):
     from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
     cm = confusion_matrix(y_true, y_pred, labels=[cfg.NOTP_LABEL, cfg.TP_LABEL])
     acc = accuracy_score(y_true, y_pred)
@@ -632,7 +632,7 @@ def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg):
             color = "white" if cm[i, j] > cm.max() / 2 else "black"
             ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=18, fontweight="bold", color=color)
 
-    ax.set_title("TP/NoTP Confusion Matrix (Holdout)", fontsize=15, fontweight="bold", pad=12)
+    ax.set_title(f"TP/NoTP Confusion Matrix ({source_label})", fontsize=15, fontweight="bold", pad=12)
     metrics_text = f"Acc: {acc:.3f}   Precision: {prec:.3f}   Recall: {rec:.3f}   F1: {f1:.3f}"
     fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
@@ -642,7 +642,7 @@ def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg):
     return {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
 
-def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
+def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png, source_label="Holdout"):
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
@@ -664,7 +664,7 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
     ax.set_ylim(lims)
     ax.set_xlabel("Actual Tmax", fontsize=13)
     ax.set_ylabel("Predicted Tmax", fontsize=13)
-    ax.set_title("Tmax Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold")
+    ax.set_title(f"Tmax Actual vs Predicted ({source_label}, NoTP only)", fontsize=14, fontweight="bold")
     metrics_text = f"MAE: {mae:.2f}   RMSE: {rmse:.2f}   R²: {r2:.3f}   N: {len(yt)}"
     fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
     ax.legend(loc="upper left", frameon=True)
@@ -1102,23 +1102,28 @@ def save_iteration_performance_trend_plot(history_df, output_png, source_label="
         return False
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=150)
-    x = history_df["itr_num"].to_numpy()
+    x = pd.to_numeric(history_df["itr_num"], errors="coerce").to_numpy(dtype=float)
 
-    def _has_valid_data(df, col):
-        return col in df.columns and df[col].notna().any()
+    def _num(col):
+        if col not in history_df.columns:
+            return None
+        vals = pd.to_numeric(history_df[col], errors="coerce").to_numpy(dtype=float)
+        return vals if np.isfinite(vals).any() else None
 
     # Panel 1: TP Recall & F1
     ax1 = axes[0, 0]
     has_p1_data = False
-    if _has_valid_data(history_df, "holdout_recall"):
-        ax1.plot(x, history_df["holdout_recall"], marker="o", linewidth=2, label="TP Recall", color="#4C78A8")
+    recall_v = _num("holdout_recall")
+    f1_v = _num("holdout_f1")
+    if recall_v is not None:
+        ax1.plot(x, recall_v, marker="o", linewidth=2, label="TP Recall", color="#4C78A8")
         has_p1_data = True
-    if _has_valid_data(history_df, "holdout_f1"):
-        ax1.plot(x, history_df["holdout_f1"], marker="s", linewidth=2, label="TP F1", color="#F58518")
+    if f1_v is not None:
+        ax1.plot(x, f1_v, marker="s", linewidth=2, label="TP F1", color="#F58518")
         has_p1_data = True
     ax1.set_xlabel("Iteration")
     ax1.set_ylabel("Score")
-    ax1.set_title("Holdout Classification: TP Recall & F1")
+    ax1.set_title(f"{source_label} Classification: TP Recall & F1")
     if has_p1_data:
         ax1.legend(frameon=True)
     else:
@@ -1129,15 +1134,17 @@ def save_iteration_performance_trend_plot(history_df, output_png, source_label="
     # Panel 2: Accuracy & Precision
     ax2 = axes[0, 1]
     has_p2_data = False
-    if _has_valid_data(history_df, "holdout_accuracy"):
-        ax2.plot(x, history_df["holdout_accuracy"], marker="o", linewidth=2, label="Accuracy", color="#54A24B")
+    acc_v = _num("holdout_accuracy")
+    prec_v = _num("holdout_precision")
+    if acc_v is not None:
+        ax2.plot(x, acc_v, marker="o", linewidth=2, label="Accuracy", color="#54A24B")
         has_p2_data = True
-    if _has_valid_data(history_df, "holdout_precision"):
-        ax2.plot(x, history_df["holdout_precision"], marker="s", linewidth=2, label="Precision", color="#E45756")
+    if prec_v is not None:
+        ax2.plot(x, prec_v, marker="s", linewidth=2, label="Precision", color="#E45756")
         has_p2_data = True
     ax2.set_xlabel("Iteration")
     ax2.set_ylabel("Score")
-    ax2.set_title("Holdout Classification: Accuracy & Precision")
+    ax2.set_title(f"{source_label} Classification: Accuracy & Precision")
     if has_p2_data:
         ax2.legend(frameon=True)
     else:
@@ -1148,24 +1155,22 @@ def save_iteration_performance_trend_plot(history_df, output_png, source_label="
     # Panel 3: Tmax RMSE & R2
     ax3 = axes[1, 0]
     has_p3_data = False
-    if _has_valid_data(history_df, "holdout_tmax_rmse"):
-        vals = history_df["holdout_tmax_rmse"].to_numpy()
-        if np.isfinite(vals).any():
-            ax3.plot(x, vals, marker="o", linewidth=2, label="Tmax RMSE", color="#B279A2")
-            has_p3_data = True
+    rmse_v = _num("holdout_tmax_rmse")
+    if rmse_v is not None:
+        ax3.plot(x, rmse_v, marker="o", linewidth=2, label="Tmax RMSE", color="#B279A2")
+        has_p3_data = True
     ax3.set_xlabel("Iteration")
     ax3.set_ylabel("RMSE")
-    ax3.set_title("Holdout Regression: Tmax RMSE")
+    ax3.set_title(f"{source_label} Regression: Tmax RMSE")
     ax3.grid(True, alpha=0.3)
     ax3.set_xticks(x)
 
     ax3b = ax3.twinx()
     has_p3b_data = False
-    if _has_valid_data(history_df, "holdout_tmax_r2"):
-        vals = history_df["holdout_tmax_r2"].to_numpy()
-        if np.isfinite(vals).any():
-            ax3b.plot(x, vals, marker="s", linewidth=2, linestyle="--", label="Tmax R²", color="#72B7B2")
-            has_p3b_data = True
+    r2_v = _num("holdout_tmax_r2")
+    if r2_v is not None:
+        ax3b.plot(x, r2_v, marker="s", linewidth=2, linestyle="--", label="Tmax R²", color="#72B7B2")
+        has_p3b_data = True
     ax3b.set_ylabel("R²")
     if has_p3_data or has_p3b_data:
         handles1, labels1 = ax3.get_legend_handles_labels()
@@ -1177,17 +1182,20 @@ def save_iteration_performance_trend_plot(history_df, output_png, source_label="
     # Panel 4: Sampling uncertainty trend (Option B)
     ax4 = axes[1, 1]
     has_p4_left_data = False
-    if _has_valid_data(history_df, "uncertainty_mean"):
-        ax4.plot(x, history_df["uncertainty_mean"], marker="o", linewidth=2, label="Uncertainty Mean", color="#4C78A8")
+    unc_mean_v = _num("uncertainty_mean")
+    unc_p90_v = _num("uncertainty_p90")
+    if unc_mean_v is not None:
+        ax4.plot(x, unc_mean_v, marker="o", linewidth=2, label="Uncertainty Mean", color="#4C78A8")
         has_p4_left_data = True
-    if _has_valid_data(history_df, "uncertainty_p90"):
-        ax4.plot(x, history_df["uncertainty_p90"], marker="s", linewidth=2, linestyle="--", label="Uncertainty P90", color="#F58518")
+    if unc_p90_v is not None:
+        ax4.plot(x, unc_p90_v, marker="s", linewidth=2, linestyle="--", label="Uncertainty P90", color="#F58518")
         has_p4_left_data = True
 
     ax4b = ax4.twinx()
     has_p4_right_data = False
-    if _has_valid_data(history_df, "uncertainty_high_ratio"):
-        ax4b.plot(x, history_df["uncertainty_high_ratio"], marker="^", linewidth=2, linestyle=":", label="High-Uncertainty Ratio", color="#E45756")
+    unc_high_v = _num("uncertainty_high_ratio")
+    if unc_high_v is not None:
+        ax4b.plot(x, unc_high_v, marker="^", linewidth=2, linestyle=":", label="High-Uncertainty Ratio", color="#E45756")
         has_p4_right_data = True
 
     if has_p4_left_data or has_p4_right_data:
@@ -1490,6 +1498,47 @@ def build_bucket_bin_quota_rules(df, cfg, bucket_target_counts):
             print("[INFO] notp_high_tmax hybrid quota-by-zone:")
             print(json.dumps(q_notp["quota_by_label"], indent=2, ensure_ascii=False))
     return rules
+
+def compute_cv_oof_predictions(x_train, y_class, y_tmax, config, gp_params=None, tmax_params=None):
+    """Compute out-of-fold (OOF) CV predictions for classifier and Tmax.
+
+    Returns per-sample OOF class predictions and OOF Tmax predictions (NoTP only),
+    enabling CV-based confusion matrix and actual-vs-predicted plots when holdout
+    evaluation is disabled.
+    """
+    from sklearn.model_selection import StratifiedKFold
+    from models_gp import fit_gpc_passfail, fit_gpr_tmax_given_pass
+
+    y = np.asarray(y_class)
+    unique, counts = np.unique(y, return_counts=True)
+    if len(unique) < 2:
+        return None
+    n_splits = int(getattr(config, "CV_SPLITS", 5))
+    splits = max(2, min(n_splits, int(counts.min())))
+    seed = int(getattr(config, "RANDOM_SEED", 42))
+    use_ard = bool(getattr(config, "GP_MODEL_SELECTION_USE_ARD", False))
+    pass_label = getattr(config, "PASS_LABEL", 0)
+
+    cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=seed)
+    oof_class = np.full(len(y), -1, dtype=int)
+    oof_tmax = np.full(len(y), np.nan, dtype=float)
+
+    for fold, (tr, va) in enumerate(cv.split(x_train, y)):
+        clf = fit_gpc_passfail(x_train[tr], y[tr], random_state=seed + fold, params=gp_params, use_ard=use_ard)
+        oof_class[va] = clf.predict(x_train[va])
+        if y_tmax is not None:
+            reg, has = fit_gpr_tmax_given_pass(
+                x_train[tr], y_tmax[tr], y[tr],
+                pass_label=pass_label, min_pass_samples=4,
+                random_state=seed + fold, params=tmax_params, use_ard=use_ard,
+            )
+            if has:
+                pass_mask_va = (y[va] == pass_label)
+                if pass_mask_va.any():
+                    oof_tmax[va[pass_mask_va]] = reg.predict(x_train[va][pass_mask_va])
+
+    return {"oof_class": oof_class, "oof_tmax": oof_tmax, "cv_splits": splits}
+
 
 def extract_cv_performance(selection_report, selected_model):
     """Map CV evaluation results to holdout-style metric keys.
@@ -1881,6 +1930,45 @@ def main():
     else:
         print(f"[WARN] FINAL_TEST_CSV not set or file not found. Skipping holdout evaluation.")
 
+    # === CV-based performance plots (fallback when holdout is unavailable) ===
+    # Generate the same confusion-matrix / Tmax actual-vs-pred figures from
+    # out-of-fold CV predictions so the Performance folder is populated.
+    holdout_ran = cm_metrics is not None
+    oof_cv_splits = None
+    if not holdout_ran:
+        try:
+            oof = compute_cv_oof_predictions(
+                x_train, y_class, y_tmax, config,
+                gp_params=tuned.get("gp_params"),
+                tmax_params=tuned.get("tmax_params"),
+            )
+        except Exception as e:
+            oof = None
+            print(f"[WARN] CV OOF computation failed: {e}")
+        if oof is not None:
+            oof_cv_splits = oof.get("cv_splits")
+            valid = oof["oof_class"] >= 0
+            if valid.any():
+                y_cv_true = np.asarray(y_class)[valid]
+                y_cv_pred = oof["oof_class"][valid]
+                cv_cm_png = performance_dir / "tp_notp_cv_confusion_matrix.png"
+                cm_metrics = save_holdout_confusion_matrix(y_cv_true, y_cv_pred, cv_cm_png, config, source_label="CV (OOF)")
+                # Expose OOF arrays so the confusion-count block below can fill counts.
+                y_holdout_class = y_cv_true
+                y_holdout_pred_class = y_cv_pred
+                print(f"[INFO] Saved CV confusion matrix: {cv_cm_png} | metrics: {cm_metrics}")
+
+            notp_mask_cv = (np.asarray(y_class) == config.PASS_LABEL) & np.isfinite(oof["oof_tmax"])
+            if notp_mask_cv.any():
+                cv_tmax_png = performance_dir / "tmax_actual_vs_pred_cv.png"
+                tmax_metrics = save_holdout_tmax_actual_vs_pred(
+                    np.asarray(y_tmax)[notp_mask_cv],
+                    oof["oof_tmax"][notp_mask_cv],
+                    cv_tmax_png,
+                    source_label="CV (OOF)",
+                )
+                print(f"[INFO] Saved CV Tmax actual-vs-pred plot: {cv_tmax_png} | metrics: {tmax_metrics}")
+
     # === Save iteration summary for cumulative tracking ===
     bucket_counts_actual = selected["selected_bucket"].value_counts().to_dict() if "selected_bucket" in selected.columns else {}
     n_unique_combos = int(selected["discrete_combo_id"].nunique()) if "discrete_combo_id" in selected.columns else 0
@@ -1888,9 +1976,24 @@ def main():
     # Fallback performance: when holdout is disabled/unavailable, report CV metrics
     # in place of holdout so trend plots and history stay populated.
     cv_perf = extract_cv_performance(selection_report, selected_model)
-    if cm_metrics or tmax_metrics:
+    # If CV summary was empty (e.g. hybrid fallback), backfill from OOF plot metrics.
+    if not holdout_ran:
+        if cv_perf.get("cv_splits") is None and oof_cv_splits is not None:
+            cv_perf["cv_splits"] = oof_cv_splits
+        if cm_metrics is not None:
+            for k_src, k_dst in (("accuracy", "accuracy"), ("precision", "precision"), ("recall", "recall"), ("f1", "f1")):
+                if cv_perf.get(k_dst) is None and cm_metrics.get(k_src) is not None:
+                    cv_perf[k_dst] = float(cm_metrics[k_src])
+        if tmax_metrics is not None:
+            if cv_perf.get("tmax_rmse") is None and tmax_metrics.get("rmse") is not None:
+                cv_perf["tmax_rmse"] = float(tmax_metrics["rmse"])
+            if cv_perf.get("tmax_r2") is None and tmax_metrics.get("r2") is not None:
+                cv_perf["tmax_r2"] = float(tmax_metrics["r2"])
+    if holdout_ran:
         performance_source = "holdout"
-    elif any(cv_perf.get(k) is not None for k in ("recall", "f1", "accuracy", "tmax_r2", "tmax_rmse")):
+    elif (cm_metrics is not None) or (tmax_metrics is not None) or any(
+        cv_perf.get(k) is not None for k in ("recall", "f1", "accuracy", "tmax_r2", "tmax_rmse")
+    ):
         performance_source = "cv"
         print(
             "[INFO] Holdout unavailable -> reporting CV performance as substitute "
@@ -1960,8 +2063,8 @@ def main():
         "uncertainty_high_ratio": uncertainty_high_ratio,
     }
 
-    # Extract confusion matrix counts if available
-    if cm_metrics and final_test_csv and Path(final_test_csv).exists():
+    # Extract confusion matrix counts if available (holdout or CV OOF)
+    if cm_metrics and y_holdout_class is not None and y_holdout_pred_class is not None:
         from sklearn.metrics import confusion_matrix as sk_cm
         try:
             cm_arr = sk_cm(y_holdout_class, y_holdout_pred_class, labels=[config.NOTP_LABEL, config.TP_LABEL])

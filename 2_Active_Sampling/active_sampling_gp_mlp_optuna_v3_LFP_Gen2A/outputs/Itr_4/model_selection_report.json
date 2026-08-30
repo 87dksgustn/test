@@ -1,0 +1,19 @@
+{
+  "model_mode": "hybrid",
+  "selected_model": "gp (hybrid fallback)",
+  "reason": "MLP not eligible. Fallback to GP for all tasks.",
+  "mlp_eligibility": {
+    "n_total": 114,
+    "n_notp": 46,
+    "n_tp": 68,
+    "min_combo_count": 50,
+    "torch_available": true,
+    "notp_total": false,
+    "notp_count": false,
+    "tp_count": true,
+    "combo_floor": true,
+    "torch_ready": true,
+    "eligible": false
+  },
+  "hybrid_selection": null
+}

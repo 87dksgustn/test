@@ -28,36 +28,28 @@ plt.rcParams["axes.unicode_minus"] = False
 # =========================================================
 
 continuous_vars = {
-    # "Cell_H": (300, 600),
-    # "Cell_W": (90, 120),
-    "Cell_D": (12, 20),
-    "Barrier_Thx": (0.25, 2.0),
-    "Barrier_Outer_Thx": (1.1, 3.0),
-    # "Cooling_LPM": (0.0, 35.0),
-    # "Venting_Gap": (1.0, 10.0),
-    "ThermalResin_Thx": (0.5, 2.5),
-    # "Housing_Btm_Thx": (1, 12),
-    # "SideBeam_Thx": (14, 30),
+    "A_Cell_D": (10, 16),
+    "C_Barrier_Thx": (1.0, 3.0),
+    # "E_Barrier_Outer_Thx": (1.1, 3.0),
+    "F_ThermalResin_Thx": (1.0, 3.0),
+    "G_Coolant_LPM": (0.0, 30.0),
 }
 
 # 기준값(center) 주변 +/- min_delta 구간은 샘플링에서 제외
 continuous_exclusion_windows = {
-    "Cell_D": {"center": 15.6, "min_delta": 0.01},
-    "Barrier_Thx": {"center": 0.85, "min_delta": 0.01},
-    "Barrier_Outer_Thx": {"center": 2.0, "min_delta": 0.01},
-    "ThermalResin_Thx": {"center": 1.0, "min_delta": 0.01},
+    "A_Cell_D": {"center": 13.385, "min_delta": 0.01},
+    "C_Barrier_Thx": {"center": 2.0, "min_delta": 0.01},
+    # "E_Barrier_Outer_Thx": {"center": 2.0, "min_delta": 0.01},
+    "F_ThermalResin_Thx": {"center": 2.0, "min_delta": 0.01},
 }
 
 discrete_vars = {
-    "Barrier_Type": ["Si1"],
-    "Barrier_Outer_Type": ["Si1", "PU"],
-    # "Cooling_Loc": ["Top", "Bottom"],
-    # "Heater_Type" : ["Small", "Medium"],
-    # "Heater_Loc" : ["Center", "DSF", "Lead"],
-    # "Cell/Barrier": [1, 2],
+    "B_Barrier_Type": ["ETI"],
+    # "D_Barrier_Outer_Type": ["Si1", "PU"],
 }
 
-samples_per_discrete_combination = 30
+# 이산 조합이 1개뿐이므로(전부 연속형 스터디) 이 값이 곧 초기 DOE 총 샘플 수가 됨
+samples_per_discrete_combination = 60
 
 n_trials = 150
 seed_min = 0
@@ -92,15 +84,11 @@ bias_sampling_enabled = True
 # - 1.0: 편향 없음
 # - 1.5~3.0: 보통 권장 범위
 bias_sampling_rules = {
-    "Cell_D": {"direction": "high", "strength": 1.0},
-    "Barrier_Thx": {
-        "direction": "low",
-        "strength": 1.0,
-        "preferred_range": (0.3, 0.6),
-        "preferred_weight": 0.55,
-    },
-    "Barrier_Outer_Thx": {"direction": "high", "strength": 1.5},
-    "ThermalResin_Thx": {"direction": "high", "strength": 1.5},
+    "A_Cell_D": {"direction": "center", "strength": 2.0},
+    "C_Barrier_Thx": {"direction": "center", "strength": 2.0},
+    # "E_Barrier_Outer_Thx": {"direction": "center", "strength": 2.0},
+    "F_ThermalResin_Thx": {"direction": "center", "strength": 2.0},
+    "G_Coolant_LPM": {"direction": "center", "strength": 2.0},
 }
 
 # ---------------------------------------------------------
@@ -193,72 +181,6 @@ def apply_bias_to_unit_column(unit_col, direction, strength):
     )
 
 
-def apply_preferred_range_to_unit_column(
-    unit_col,
-    lower,
-    upper,
-    preferred_range,
-    preferred_weight,
-):
-    preferred_low, preferred_high = map(float, preferred_range)
-
-    if not (lower <= preferred_low < preferred_high <= upper):
-        raise ValueError(
-            "preferred_range가 변수 범위를 벗어났습니다: "
-            f"range=({lower}, {upper}), preferred_range=({preferred_low}, {preferred_high})"
-        )
-
-    total_span = upper - lower
-    preferred_low_unit = (preferred_low - lower) / total_span
-    preferred_high_unit = (preferred_high - lower) / total_span
-
-    left_len = preferred_low_unit
-    center_len = preferred_high_unit - preferred_low_unit
-    right_len = 1.0 - preferred_high_unit
-
-    if center_len <= 0:
-        raise ValueError(
-            f"preferred_range가 유효하지 않습니다: ({preferred_low}, {preferred_high})"
-        )
-
-    outside_total = left_len + right_len
-    preferred_weight = float(np.clip(preferred_weight, 0.0, 1.0))
-
-    if outside_total <= 0 or preferred_weight >= 1.0:
-        return np.interp(unit_col, [0.0, 1.0], [preferred_low_unit, preferred_high_unit])
-
-    outside_weight = 1.0 - preferred_weight
-    left_weight = outside_weight * (left_len / outside_total) if left_len > 0 else 0.0
-    center_weight = preferred_weight
-    right_weight = outside_weight - left_weight
-
-    left_threshold = left_weight
-    center_threshold = left_weight + center_weight
-
-    transformed = np.empty_like(unit_col)
-
-    left_mask = unit_col < left_threshold
-    center_mask = (unit_col >= left_threshold) & (unit_col < center_threshold)
-    right_mask = unit_col >= center_threshold
-
-    if np.any(left_mask):
-        transformed[left_mask] = (
-            unit_col[left_mask] / max(left_weight, 1e-12)
-        ) * left_len
-
-    if np.any(center_mask):
-        transformed[center_mask] = preferred_low_unit + (
-            (unit_col[center_mask] - left_threshold) / max(center_weight, 1e-12)
-        ) * center_len
-
-    if np.any(right_mask):
-        transformed[right_mask] = preferred_high_unit + (
-            (unit_col[right_mask] - center_threshold) / max(right_weight, 1e-12)
-        ) * right_len
-
-    return transformed
-
-
 def generate_lhs_samples(continuous_vars, n_samples, seed, use_bias=False):
     var_names = list(continuous_vars.keys())
     bounds = np.array(list(continuous_vars.values()), dtype=float)
@@ -283,24 +205,9 @@ def generate_lhs_samples(continuous_vars, n_samples, seed, use_bias=False):
                 strength = rule.get("strength", 1.0)
                 unit_col = apply_bias_to_unit_column(unit_col, direction, strength)
 
-                preferred_range = rule.get("preferred_range")
-                if preferred_range is not None:
-                    preferred_weight = rule.get("preferred_weight", 0.5)
-                    unit_col = apply_preferred_range_to_unit_column(
-                        unit_col=unit_col,
-                        lower=lower,
-                        upper=upper,
-                        preferred_range=preferred_range,
-                        preferred_weight=preferred_weight,
-                    )
-
         exclusion = continuous_exclusion_windows.get(var_name)
         if exclusion is None:
-            X_scaled[:, col_idx] = qmc.scale(
-                unit_col,
-                lower,
-                upper
-            )
+            X_scaled[:, col_idx] = lower + unit_col * (upper - lower)
             continue
 
         center = float(exclusion["center"])
@@ -366,8 +273,8 @@ def generate_discrete_combinations(discrete_vars):
     combinations = list(product(*levels))
 
     si_types = {"Si1", "Si2", "Si3"}
-    barrier_key = "Barrier_Type"
-    outer_key = "Barrier_Outer_Type"
+    barrier_key = "B_Barrier_Type"
+    outer_key = "D_Barrier_Outer_Type"
 
     if barrier_key in var_names and outer_key in var_names:
         barrier_idx = var_names.index(barrier_key)
@@ -711,6 +618,11 @@ def clone_groups(groups):
 
 
 def local_swap_refinement(distance_matrix, groups, seed, n_iterations):
+    # 이산 조합이 1개 이하이면 그룹 간 swap 자체가 불가능하므로 그대로 반환
+    # (전부 연속형 스터디: 단일 그룹 내 maximin 품질은 seed 탐색으로 확보)
+    if len(groups) < 2:
+        return clone_groups(groups)
+
     rng = np.random.default_rng(seed + 2026)
 
     best_groups = clone_groups(groups)
