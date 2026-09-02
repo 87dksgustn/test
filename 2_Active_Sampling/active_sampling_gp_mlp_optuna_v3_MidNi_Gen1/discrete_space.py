@@ -24,7 +24,17 @@ def generate_valid_discrete_combinations(discrete_levels, discrete_cols, s_prefi
     return df
 
 def attach_discrete_combo_id(df, valid_combos, discrete_cols):
-    out = df.merge(valid_combos[discrete_cols + ["discrete_combo_id"]], on=discrete_cols, how="left")
+    work = df.copy()
+
+    # If a discrete column has exactly one valid level, safely impute NaN values.
+    # This keeps single-level studies robust when source CSV has sparse missing values.
+    for col in discrete_cols:
+        if col in work.columns and work[col].isna().any() and col in valid_combos.columns:
+            levels = valid_combos[col].dropna().unique().tolist()
+            if len(levels) == 1:
+                work[col] = work[col].fillna(levels[0])
+
+    out = work.merge(valid_combos[discrete_cols + ["discrete_combo_id"]], on=discrete_cols, how="left")
     missing = out["discrete_combo_id"].isna().sum()
     if missing:
         bad = out.loc[out["discrete_combo_id"].isna(), discrete_cols].drop_duplicates()

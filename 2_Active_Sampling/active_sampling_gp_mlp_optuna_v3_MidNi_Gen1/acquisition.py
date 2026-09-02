@@ -216,6 +216,9 @@ def compute_acquisition_scores(candidate_df, labeled_df, x_candidate_transformed
     out["p_tp"] = pred["p_tp"]; out["p_notp"] = pred["p_notp"]; out["boundary_score"] = pred["boundary_score"]
     out["clf_uncertainty_raw"] = pred["clf_uncertainty"]; out["clf_uncertainty_scaled"] = clf_unc
     out["tmax_pred_given_notp"] = pred["tmax_pred"]; out["tmax_std_given_notp"] = pred["tmax_std"]
+    tmax_label = str(getattr(config, "TMAX_OUTPUT_LABEL", "MaxT_Adj"))
+    out[f"{tmax_label}_pred_given_notp"] = out["tmax_pred_given_notp"]
+    out[f"{tmax_label}_std_given_notp"] = out["tmax_std_given_notp"]
     out["tmax_scaled"] = tmax_scaled; out["notp_window_score"] = notp_win; out["local_sparsity"] = local; out["combo_priority"] = combo
     out["acq_boundary"] = acq_b; out["acq_notp_high_tmax"] = acq_t; out["acq_uncertainty_sparse"] = acq_u
     # Add extra output predictions (view-only, not used for scoring/bucket allocation)

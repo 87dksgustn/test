@@ -37,7 +37,7 @@ continuous_vars = {
 
 # 기준값(center) 주변 +/- min_delta 구간은 샘플링에서 제외
 continuous_exclusion_windows = {
-    "A_Cell_D": {"center": 13.385, "min_delta": 0.01},
+    "A_Cell_D": {"center": 13.375, "min_delta": 0.01},
     "C_Barrier_Thx": {"center": 2.0, "min_delta": 0.01},
     # "E_Barrier_Outer_Thx": {"center": 2.0, "min_delta": 0.01},
     "F_ThermalResin_Thx": {"center": 2.0, "min_delta": 0.01},
@@ -80,15 +80,21 @@ bias_sampling_enabled = True
 # - "low"   : 작은 값 쪽으로 치우침
 # - "center": 중앙값 근처로 치우침
 # - "edge"  : 양끝(극단) 값 쪽으로 치우침
+# - "band"  : 특정 구간에 집중
 # strength
 # - 1.0: 편향 없음
 # - 1.5~3.0: 보통 권장 범위
 bias_sampling_rules = {
     "A_Cell_D": {"direction": "center", "strength": 2.0},
-    "C_Barrier_Thx": {"direction": "center", "strength": 2.0},
+    "C_Barrier_Thx": {
+        "direction": "band",
+        "focus_range": (1.2, 1.6),
+        "target_mass": 0.45,
+        "strength": 2.0,
+    },
     # "E_Barrier_Outer_Thx": {"direction": "center", "strength": 2.0},
     "F_ThermalResin_Thx": {"direction": "center", "strength": 2.0},
-    "G_Coolant_LPM": {"direction": "center", "strength": 2.0},
+    "G_Coolant_LPM": {"direction": "low", "strength": 2.0},
 }
 
 # ---------------------------------------------------------
@@ -181,6 +187,69 @@ def apply_bias_to_unit_column(unit_col, direction, strength):
     )
 
 
+def apply_band_bias_to_unit_column(unit_col, lower, upper, focus_range, target_mass):
+    focus_lower, focus_upper = map(float, focus_range)
+
+    if not (lower <= focus_lower < focus_upper <= upper):
+        raise ValueError(
+            f"focus_range가 {lower}~{upper} 범위를 벗어났습니다: "
+            f"({focus_lower}, {focus_upper})"
+        )
+
+    span = upper - lower
+    focus_lower_unit = (focus_lower - lower) / span
+    focus_upper_unit = (focus_upper - lower) / span
+    focus_width_unit = focus_upper_unit - focus_lower_unit
+
+    if not (0.0 < focus_width_unit < 1.0):
+        raise ValueError(
+            f"focus_range 폭이 유효하지 않습니다: ({focus_lower}, {focus_upper})"
+        )
+
+    focus_mass = float(target_mass)
+    if not (focus_width_unit <= focus_mass < 1.0):
+        raise ValueError(
+            f"target_mass는 균등 점유율 이상 1 미만이어야 합니다: "
+            f"uniform={focus_width_unit:.4f}, target_mass={focus_mass:.4f}"
+        )
+
+    outer_mass = 1.0 - focus_mass
+    outer_width = 1.0 - focus_width_unit
+
+    if outer_width <= 0.0:
+        raise ValueError("focus_range가 전체 범위를 차지해 편향을 적용할 수 없습니다.")
+
+    left_mass = outer_mass * (focus_lower_unit / outer_width)
+    right_mass = outer_mass - left_mass
+
+    transformed = np.empty_like(unit_col)
+
+    left_mask = unit_col < left_mass
+    center_mask = (unit_col >= left_mass) & (unit_col < left_mass + focus_mass)
+    right_mask = ~left_mask & ~center_mask
+
+    if left_mass > 0.0 and np.any(left_mask):
+        transformed[left_mask] = focus_lower_unit * (unit_col[left_mask] / left_mass)
+
+    if np.any(center_mask):
+        transformed[center_mask] = focus_lower_unit + (
+            (unit_col[center_mask] - left_mass) / focus_mass
+        ) * focus_width_unit
+
+    if right_mass > 0.0 and np.any(right_mask):
+        transformed[right_mask] = focus_upper_unit + (
+            (unit_col[right_mask] - left_mass - focus_mass) / right_mass
+        ) * (1.0 - focus_upper_unit)
+
+    if left_mass == 0.0 and np.any(left_mask):
+        transformed[left_mask] = focus_lower_unit
+
+    if right_mass == 0.0 and np.any(right_mask):
+        transformed[right_mask] = focus_upper_unit
+
+    return transformed
+
+
 def generate_lhs_samples(continuous_vars, n_samples, seed, use_bias=False):
     var_names = list(continuous_vars.keys())
     bounds = np.array(list(continuous_vars.values()), dtype=float)
@@ -202,8 +271,17 @@ def generate_lhs_samples(continuous_vars, n_samples, seed, use_bias=False):
             rule = bias_sampling_rules.get(var_name)
             if rule is not None:
                 direction = rule.get("direction", "high")
-                strength = rule.get("strength", 1.0)
-                unit_col = apply_bias_to_unit_column(unit_col, direction, strength)
+                if str(direction).strip().lower() == "band":
+                    unit_col = apply_band_bias_to_unit_column(
+                        unit_col=unit_col,
+                        lower=lower,
+                        upper=upper,
+                        focus_range=rule["focus_range"],
+                        target_mass=rule.get("target_mass", 0.30)
+                    )
+                else:
+                    strength = rule.get("strength", 1.0)
+                    unit_col = apply_bias_to_unit_column(unit_col, direction, strength)
 
         exclusion = continuous_exclusion_windows.get(var_name)
         if exclusion is None:
@@ -1079,6 +1157,14 @@ def compute_bias_adherence_score(df_unit, bias_rules):
         elif direction == "edge":
             mean_abs_center_dist = float(np.mean(np.abs(values - 0.5)))
             score = float(np.clip((mean_abs_center_dist - 0.25) / 0.25, 0.0, 1.0))
+        elif direction == "band":
+            lower, upper = continuous_vars[var_name]
+            focus_lower, focus_upper = map(float, rule["focus_range"])
+            focus_lower_unit = (focus_lower - float(lower)) / (float(upper) - float(lower))
+            focus_upper_unit = (focus_upper - float(lower)) / (float(upper) - float(lower))
+            actual_mass = float(np.mean((values >= focus_lower_unit) & (values <= focus_upper_unit)))
+            target_mass = float(rule.get("target_mass", focus_upper_unit - focus_lower_unit))
+            score = float(np.clip(actual_mass / target_mass, 0.0, 1.0))
         else:
             score = 0.5
 
@@ -1515,7 +1601,7 @@ def save_sampling_comparison_plots(
 def create_trial_result_dir(trials_dir, bias_score, coverage_score, A_score):
     trials_dir.mkdir(parents=True, exist_ok=True)
 
-    result_dir = trials_dir / f"bias{bias_score:.4f}_cvrg{coverage_score:.4f}_A{A_score:.4f}"
+    result_dir = trials_dir / f"cvrg{coverage_score:.4f}_A{A_score:.4f}_bias{bias_score:.4f}"
     result_dir.mkdir(exist_ok=True)
 
     return result_dir

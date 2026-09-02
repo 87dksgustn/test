@@ -20,7 +20,7 @@ CONTINUOUS_ALIAS = {
     "C_Barrier_Thx": ["C_Barrier_Thx", "Barrier_Thx"],
     # "E_Barrier_Outer_Thx": ["E_Barrier_Outer_Thx", "Barrier_Outer_Thx"],  # disabled for this study
     "F_ThermalResin_Thx": ["F_ThermalResin_Thx", "ThermalResin_Thx"],
-    "G_Coolant_LPM": ["G_Coolant_LPM", "Coolant_LPM"],
+    "G_CoolantLPM": ["G_CoolantLPM", "G_Coolant_LPM", "Coolant_LPM", "G_CoolingLPM"],
 }
 
 

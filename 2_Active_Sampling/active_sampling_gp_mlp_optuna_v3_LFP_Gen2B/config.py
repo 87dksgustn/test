@@ -423,3 +423,8 @@ OUTPUT_MODEL_SELECTION_JSON = OUTPUT_DIR / "model_selection_report.json"
 OUTPUT_OPTUNA_REPORT_JSON = OUTPUT_DIR / "optuna_report.json"
 OUTPUT_CV_FOLD_METRICS_CSV = OUTPUT_DIR / "cv_fold_metrics.csv"
 
+# Streamlit predictor runtime options
+# - "on": save prediction history by default
+# - "off": do not save unless user turns it on in the sidebar
+PREDICTION_HISTORY_DEFAULT = "on"
+

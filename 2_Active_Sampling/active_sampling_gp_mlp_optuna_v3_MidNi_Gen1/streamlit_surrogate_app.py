@@ -142,7 +142,9 @@ def single_predict_ui(bundle):
 
 def batch_predict_ui(bundle):
     st.subheader("Batch Prediction (CSV)")
-    st.caption("필수 컬럼: A_Cell_D, C_Barrier_Thx, E_Barrier_Outer_Thx, F_ThermalResin_Thx, B_Barrier_Type, D_Barrier_Outer_Type")
+    info = get_bundle_info(bundle)
+    required_cols = list(info.get("base_continuous_cols", [])) + list(info.get("discrete_cols", []))
+    st.caption("필수 컬럼: " + ", ".join(required_cols))
 
     uploaded = st.file_uploader("Upload input CSV", type=["csv"])
     if uploaded is None:

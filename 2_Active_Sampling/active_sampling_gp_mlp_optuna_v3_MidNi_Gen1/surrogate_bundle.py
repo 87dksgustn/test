@@ -22,6 +22,8 @@ def build_config_snapshot(config_module):
         "discrete_levels": dict(getattr(config_module, "DISCRETE_LEVELS", {})),
         "other_regression_cols": list(getattr(config_module, "OTHER_REGRESSION_COLS", [])),
         "time_feature_cols": list(getattr(config_module, "TIME_FEATURE_COLS", [])),
+        "tmax_col": str(getattr(config_module, "TMAX_COL", "")),
+        "tmax_output_label": str(getattr(config_module, "TMAX_OUTPUT_LABEL", "MaxT_Adj")),
         "tp_label": int(getattr(config_module, "TP_LABEL", 1)),
         "notp_label": int(getattr(config_module, "NOTP_LABEL", 0)),
         "pass_label": int(getattr(config_module, "PASS_LABEL", 0)),
@@ -110,6 +112,7 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prediction_dict_to_frame(pred, cfg):
+    tmax_label = str(cfg.get("tmax_output_label", "MaxT_Adj"))
     out = pd.DataFrame({
         "p_tp": np.asarray(pred["p_tp"], dtype=float),
         "p_notp": np.asarray(pred["p_notp"], dtype=float),
@@ -117,6 +120,8 @@ def prediction_dict_to_frame(pred, cfg):
         "tmax_pred": np.asarray(pred["tmax_pred"], dtype=float),
         "tmax_std": np.asarray(pred["tmax_std"], dtype=float),
     })
+    out[f"{tmax_label}_pred"] = out["tmax_pred"]
+    out[f"{tmax_label}_std"] = out["tmax_std"]
 
     if "clf_uncertainty" in pred:
         out["clf_uncertainty"] = np.asarray(pred["clf_uncertainty"], dtype=float)

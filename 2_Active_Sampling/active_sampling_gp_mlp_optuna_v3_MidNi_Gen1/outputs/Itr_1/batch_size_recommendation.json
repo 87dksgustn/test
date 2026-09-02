@@ -1,0 +1,6 @@
+{
+  "current_batch_size": 20,
+  "recommended_batch_size": 20,
+  "decision": "hold",
+  "reason": "Not enough iterations (1 < 3) for decision."
+}

@@ -4,8 +4,8 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_18_Dataset.csv"
-FINAL_TEST_CSV = "z_Final_Dataset.csv"
+INPUT_CSV = "Itr_1_Dataset.csv"
+FINAL_TEST_CSV = ""  # No final holdout CSV in this study; use CV fallback metrics.
 
 # Base continuous columns (original features)
 # NOTE: E_Barrier_Outer_Thx is defined but disabled for this study (uncomment to enable).
@@ -14,7 +14,7 @@ BASE_CONTINUOUS_COLS = [
     "C_Barrier_Thx",
     # "E_Barrier_Outer_Thx",
     "F_ThermalResin_Thx",
-    "G_Coolant_LPM",
+    "G_CoolantLPM",
 ]
 
 # Interaction terms: (col1, col2, new_col_name)
@@ -32,11 +32,12 @@ DISCRETE_COLS = ["B_Barrier_Type"]  # , "D_Barrier_Outer_Type"
 
 PASSFAIL_COL = "TP_NoTP"
 TPNoTP_COL = PASSFAIL_COL
-TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
+TMAX_COL = "MaxT_TB_Center"        # Main regression target (NoTP-only)
+TMAX_OUTPUT_LABEL = "MaxT_Adj"     # Display label used in outputs/reports
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
-OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power"]
+OTHER_REGRESSION_COLS = ["MaxT_TB_Top", "MaxT_TB_Btm", "MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power"]
 TIME_FEATURE_COLS = []
 
 # Extra outputs policy flags
@@ -54,8 +55,8 @@ CONTINUOUS_BOUNDS = {
     "A_Cell_D": (10.0, 16.0),
     "C_Barrier_Thx": (1.0, 3.0),
     # "E_Barrier_Outer_Thx": (1.1, 3.0),  # disabled for this study
-    "F_ThermalResin_Thx": (1.0, 3.0),
-    "G_Coolant_LPM": (0.0, 30.0),
+    "F_ThermalResin_Thx": (1.2, 3.0),
+    "G_CoolantLPM": (0.0, 30.0),
     # Interaction term bounds (manual entry; NOT auto-updated when base bounds change)
     # CellD_x_Resin = A_Cell_D * F_ThermalResin_Thx: 10~16 × 1.0~3.0 = 10~48
     "CellD_x_Resin": (10.0, 48.0),
@@ -64,11 +65,11 @@ CONTINUOUS_BOUNDS = {
 
 # Applied only to newly generated candidate points, not existing CFD data.
 EXCLUDED_REFERENCE_RANGES = {
-    "A_Cell_D": {"center": 13.385, "half_width": 0.01},
+    "A_Cell_D": {"center": 13.375, "half_width": 0.01},
     "C_Barrier_Thx": {"center": 2.0, "half_width": 0.01},
     # "E_Barrier_Outer_Thx": {"center": 2.0, "half_width": 0.01},  # disabled for this study
     "F_ThermalResin_Thx": {"center": 2.0, "half_width": 0.01},
-    "G_Coolant_LPM": {"center": 20.0, "half_width": 0.0},
+    "G_CoolantLPM": {"center": 20.0, "half_width": 0.0},
 }
 
 DISCRETE_LEVELS = {
@@ -200,11 +201,11 @@ BUCKET_DISTANCE_MULTIPLIER = {
 }
 BUCKET_LOCAL_DISTANCE_RULES = {
     "boundary": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_Coolant_LPM"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_CoolantLPM"],
         "min_dist": 0.10,
     },
     "notp_high_tmax": {
-        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_Coolant_LPM"],
+        "cols": ["A_Cell_D", "C_Barrier_Thx", "F_ThermalResin_Thx", "G_CoolantLPM"],
         "min_dist": 0.22,
     }
 }

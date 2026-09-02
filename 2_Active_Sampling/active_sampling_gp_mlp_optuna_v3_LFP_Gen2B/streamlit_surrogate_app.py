@@ -13,6 +13,23 @@ import surrogate_bundle
 from surrogate_bundle import get_bundle_info, load_surrogate_bundle, predict_with_bundle
 
 
+def runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def data_root() -> Path:
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass)
+    return runtime_root()
+
+
+def embedded_bundle_path() -> Path:
+    return data_root() / "embedded_bundle" / "latest_surrogate_bundle.pkl"
+
+
 def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
     mask_fn = getattr(surrogate_bundle, "mask_tp_regression_outputs", None)
     if callable(mask_fn):
@@ -34,9 +51,35 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def history_csv_path() -> Path:
-    out_dir = Path(getattr(config, "OUTPUT_DIR", Path("outputs")))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / "prediction_history.csv"
+    configured = Path(getattr(config, "OUTPUT_DIR", Path("outputs")))
+    candidates = []
+
+    if configured.is_absolute():
+        candidates.append(configured)
+    else:
+        candidates.append((Path.cwd() / configured).resolve())
+        candidates.append((runtime_root() / configured).resolve())
+
+    # Final fallback for read-only install locations.
+    candidates.append((Path.home() / "SurrogatePredictor" / "outputs").resolve())
+
+    checked = set()
+    for out_dir in candidates:
+        out_key = str(out_dir)
+        if out_key in checked:
+            continue
+        checked.add(out_key)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            probe = out_dir / ".write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return out_dir / "prediction_history.csv"
+        except Exception:
+            continue
+
+    # Last-resort path if all checks fail.
+    return (Path.cwd() / "prediction_history.csv").resolve()
 
 
 def append_history(rows_df: pd.DataFrame):
@@ -49,6 +92,10 @@ def append_history(rows_df: pd.DataFrame):
         merged = rows_df.copy()
     merged = mask_tp_regression_outputs(merged)
     merged.to_csv(p, index=False, encoding="utf-8-sig")
+
+
+def history_enabled() -> bool:
+    return bool(st.session_state.get("save_history_enabled", False))
 
 
 def load_history() -> pd.DataFrame:
@@ -65,6 +112,9 @@ def clear_history():
 
 
 def default_bundle_path() -> Path:
+    embedded = embedded_bundle_path()
+    if embedded.exists():
+        return embedded
     return Path(getattr(config, "OUTPUT_DIR", Path("outputs"))) / "latest_surrogate_bundle.pkl"
 
 
@@ -139,7 +189,11 @@ def single_predict_ui(bundle):
             result_df = pd.concat([input_df, pred_df], axis=1)
             result_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             result_df.insert(1, "predict_mode", "single")
-            append_history(result_df)
+            if history_enabled():
+                append_history(result_df)
+                st.caption(f"History saved to: {history_csv_path()}")
+            else:
+                st.info("History save is OFF. Turn on 'Save prediction history' in the sidebar.")
             st.success("Prediction succeeded")
             st.dataframe(result_df, use_container_width=True)
         except Exception as e:
@@ -165,7 +219,11 @@ def batch_predict_ui(bundle):
             hist_df = out_df.copy()
             hist_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             hist_df.insert(1, "predict_mode", "batch")
-            append_history(hist_df)
+            if history_enabled():
+                append_history(hist_df)
+                st.caption(f"History saved to: {history_csv_path()}")
+            else:
+                st.info("History save is OFF. Turn on 'Save prediction history' in the sidebar.")
             st.success(f"Prediction succeeded: {len(out_df)} rows")
             st.dataframe(out_df.head(20), use_container_width=True)
 
@@ -182,7 +240,11 @@ def batch_predict_ui(bundle):
 
 def history_ui():
     st.subheader("Prediction History")
-    st.caption("예측 결과가 outputs/prediction_history.csv에 누적 저장됩니다.")
+    st.caption(f"Current history file: {history_csv_path()}")
+    if history_enabled():
+        st.caption("예측 결과가 outputs/prediction_history.csv에 누적 저장됩니다.")
+    else:
+        st.caption("이력 저장이 OFF 상태입니다. 사이드바에서 ON으로 변경할 수 있습니다.")
 
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -212,18 +274,32 @@ def history_ui():
 def main():
     global st
     import streamlit as st_module
-    from streamlit.runtime.scriptrunner import get_script_run_ctx
-
-    if get_script_run_ctx() is None:
-        print("[ERROR] This app must be launched with Streamlit.")
-        print("Run: streamlit run streamlit_surrogate_app.py")
-        sys.exit(1)
 
     st = st_module
+
+    if getattr(sys, "frozen", False):
+        # In portable packaged mode, keep relative IO paths near the executable.
+        try:
+            os_root = runtime_root()
+            os_root.mkdir(parents=True, exist_ok=True)
+            import os
+            os.chdir(os_root)
+        except Exception:
+            pass
 
     st.set_page_config(page_title="Surrogate Predictor", layout="wide")
     st.title("Surrogate Predictor")
     st.caption("Saved surrogate bundle 기반 예측 도구")
+
+    st.sidebar.header("Runtime Options")
+    default_history = str(getattr(config, "PREDICTION_HISTORY_DEFAULT", "on")).lower() in {"1", "true", "yes", "on"}
+    if "save_history_enabled" not in st.session_state:
+        st.session_state["save_history_enabled"] = default_history
+    st.sidebar.checkbox(
+        "Save prediction history",
+        key="save_history_enabled",
+        help="OFF면 예측 이력을 파일로 저장하지 않습니다.",
+    )
 
     bundle_input = st.text_input("Bundle path", value=str(default_bundle_path()))
     bundle_path = Path(bundle_input)
