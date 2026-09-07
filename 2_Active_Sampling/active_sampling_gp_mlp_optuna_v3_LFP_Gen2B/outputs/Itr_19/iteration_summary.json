@@ -53,7 +53,7 @@
   "n_unique_combos_selected": 2,
   "uncertainty_metric_source": "clf_uncertainty_scaled",
   "uncertainty_high_threshold": 0.7,
-  "uncertainty_mean": 0.6093489612380524,
-  "uncertainty_p90": 0.85935437449155,
-  "uncertainty_high_ratio": 0.42857142857142855
+  "uncertainty_mean": 0.6351530366214669,
+  "uncertainty_p90": 0.8169310959105094,
+  "uncertainty_high_ratio": 0.5714285714285714
 }

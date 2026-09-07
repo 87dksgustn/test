@@ -952,6 +952,8 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
     mae = mean_absolute_error(yt, yp)
     rmse = np.sqrt(mean_squared_error(yt, yp))
     r2 = r2_score(yt, yp) if len(yt) > 1 else np.nan
+    ape = np.abs((yt - yp) / np.maximum(np.abs(yt), 1e-8)) * 100.0
+    mape = float(np.mean(ape)) if len(ape) > 0 else np.nan
 
     fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
     ax.scatter(yt, yp, s=50, alpha=0.7, edgecolors="black", linewidths=0.4, c="#4C78A8")
@@ -962,14 +964,41 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png):
     ax.set_xlabel("Actual Tmax", fontsize=13)
     ax.set_ylabel("Predicted Tmax", fontsize=13)
     ax.set_title("Tmax Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold")
-    metrics_text = f"MAE: {mae:.2f}   RMSE: {rmse:.2f}   R²: {r2:.3f}   N: {len(yt)}"
+    metrics_text = f"MAE: {mae:.2f}   RMSE: {rmse:.2f}   R²: {r2:.3f}   MAPE: {mape:.2f}%   N: {len(yt)}"
     fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
     ax.legend(loc="upper left", frameon=True)
     ax.grid(True, alpha=0.3)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
     fig.savefig(output_png, dpi=180)
     plt.close(fig)
-    return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
+    return {"mae": mae, "rmse": rmse, "r2": r2, "mape": mape, "n": len(yt)}
+
+
+def save_holdout_tmax_mape_plot(y_true, y_pred, output_png):
+    """Save a MAPE distribution plot for Tmax holdout predictions."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_pred)
+    yt = y_true[mask]
+    yp = y_pred[mask]
+    if len(yt) == 0:
+        return None
+
+    ape = np.abs((yt - yp) / np.maximum(np.abs(yt), 1e-8)) * 100.0
+    mape = float(np.mean(ape)) if len(ape) > 0 else np.nan
+
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+    ax.hist(ape, bins=min(20, max(5, len(ape) // 2)), color="#5B8FF9", alpha=0.8, edgecolor="black")
+    ax.axvline(mape, color="#E45756", linestyle="--", linewidth=2, label=f"MAPE = {mape:.2f}%")
+    ax.set_xlabel("Absolute Percentage Error (%)", fontsize=12)
+    ax.set_ylabel("Count", fontsize=12)
+    ax.set_title("Tmax Holdout MAPE Distribution", fontsize=13, fontweight="bold")
+    ax.legend(frameon=True)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return {"mape": mape, "n": len(ape)}
 
 
 def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir):
@@ -996,7 +1025,7 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         return {}
     
     all_metrics = {}
-    colors = ["#4C78A8", "#F58518", "#54A24B"]  # Blue, Orange, Green
+    colors = ["#4C78A8", "#F58518", "#54A24B", "#B279A2"]  # Blue, Orange, Green, Purple
     
     for i, col in enumerate(extra_cols):
         yt = y_extra_true[:, i]
@@ -1020,11 +1049,13 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         # Individual metric values are kept for logging/reporting,
         # while plotting is consolidated into a single multi-panel figure below.
     
-    # Create combined 3-panel plot if all three outputs exist
-    if len(extra_cols) >= 3:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=150)
-        for i, col in enumerate(extra_cols[:3]):
-            ax = axes[i]
+    # Create combined 2x2 plot for up to four extra outputs
+    if len(extra_cols) >= 1:
+        plot_cols = extra_cols[:4]
+        fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=150)
+        axes_flat = axes.flatten()
+        for i, col in enumerate(plot_cols):
+            ax = axes_flat[i]
             yt = y_extra_true[:, i]
             yp = y_extra_pred[:, i]
             mask = np.isfinite(yt) & np.isfinite(yp)
@@ -1051,6 +1082,10 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
             rmse_val = m.get("rmse", np.nan)
             ax.set_title(f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.4f}" if abs(rmse_val) < 10 else f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.2f}", fontsize=12, fontweight="bold")
             ax.grid(True, alpha=0.3)
+
+        # Hide unused panels when fewer than four outputs are available.
+        for j in range(len(plot_cols), 4):
+            axes_flat[j].axis("off")
         
         fig.suptitle("Extra Outputs: Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold", y=1.02)
         fig.tight_layout()
@@ -2169,8 +2204,16 @@ def main():
                     np.asarray(holdout_pred["tmax_pred"], dtype=float)[notp_mask],
                     holdout_tmax_png,
                 )
+                tmax_mape_png = performance_dir / "tmax_mape_holdout.png"
+                tmax_mape_metrics = save_holdout_tmax_mape_plot(
+                    y_holdout_tmax[notp_mask],
+                    np.asarray(holdout_pred["tmax_pred"], dtype=float)[notp_mask],
+                    tmax_mape_png,
+                )
                 print(f"[INFO] Saved holdout Tmax plot: {holdout_tmax_png}")
+                print(f"[INFO] Saved holdout Tmax MAPE plot: {tmax_mape_png}")
                 print(f"[INFO] Holdout Tmax metrics: {tmax_metrics}")
+                print(f"[INFO] Holdout Tmax MAPE summary: {tmax_mape_metrics}")
                 
                 # === CV vs Holdout comparison plot ===
                 # Build holdout metrics dict for comparison
@@ -2264,6 +2307,7 @@ def main():
         "holdout_fp": None,
         "holdout_tmax_rmse": float(tmax_metrics["rmse"]) if tmax_metrics else None,
         "holdout_tmax_r2": float(tmax_metrics["r2"]) if tmax_metrics else None,
+        "holdout_tmax_mape": float(tmax_metrics["mape"]) if tmax_metrics else None,
         "holdout_tmax_n": int(tmax_metrics["n"]) if tmax_metrics else None,
         "boundary_count": int(bucket_counts_actual.get("boundary", 0)),
         "notp_high_tmax_count": int(bucket_counts_actual.get("notp_high_tmax", 0)),

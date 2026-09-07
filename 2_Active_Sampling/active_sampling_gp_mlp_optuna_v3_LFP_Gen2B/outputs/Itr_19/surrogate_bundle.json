@@ -1,6 +1,6 @@
 {
   "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B\\outputs\\Try_1\\surrogate_bundle.pkl",
-  "created_at": "2026-08-24T12:38:21",
+  "created_at": "2026-09-02T21:05:37",
   "config": {
     "base_continuous_cols": [
       "A_Cell_D",
@@ -70,7 +70,8 @@
     "other_regression_cols": [
       "MaxT_Adj_Y",
       "MaxT_Adj_Z",
-      "Max_Power"
+      "Max_Power",
+      "Time_MaxT"
     ],
     "time_feature_cols": [],
     "tp_label": 1,
