@@ -7,12 +7,12 @@
     "random_check": 0.05
   },
   "recommended_bucket_ratio": {
-    "boundary": 0.6,
-    "notp_high_tmax": 0.2,
-    "misclass_repair": 0.1,
-    "uncertainty_sparse": 0.05,
-    "random_check": 0.05
+    "boundary": 0.5703125,
+    "notp_high_tmax": 0.21875,
+    "misclass_repair": 0.09765625,
+    "uncertainty_sparse": 0.080078125,
+    "random_check": 0.033203125
   },
-  "decision": "hold",
-  "reason": "Not enough iterations (2 < 3) for decision."
+  "decision": "mixed",
+  "reason": "decision=mixed; f1_delta=-0.0008; recall_delta=0.0000; rmse_delta_pct=7.15; unc_high=0.050"
 }

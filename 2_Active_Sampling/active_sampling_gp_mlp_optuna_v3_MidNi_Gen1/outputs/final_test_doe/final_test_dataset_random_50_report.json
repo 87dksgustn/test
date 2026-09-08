@@ -1,0 +1,38 @@
+{
+  "method": "simple_random_sampling",
+  "note": "No surrogate model, acquisition, or active-sampling logic used.",
+  "n_cases": 50,
+  "seed": 42,
+  "continuous_cols": [
+    "A_Cell_D",
+    "C_Barrier_Thx",
+    "F_ThermalResin_Thx",
+    "G_CoolantLPM"
+  ],
+  "continuous_bounds": {
+    "A_Cell_D": [
+      10.0,
+      16.0
+    ],
+    "C_Barrier_Thx": [
+      1.0,
+      3.0
+    ],
+    "F_ThermalResin_Thx": [
+      1.2,
+      3.0
+    ],
+    "G_CoolantLPM": [
+      0.0,
+      30.0
+    ]
+  },
+  "discrete_cols": [
+    "B_Barrier_Type"
+  ],
+  "discrete_levels": {
+    "B_Barrier_Type": [
+      "ETI"
+    ]
+  }
+}

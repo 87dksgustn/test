@@ -1,0 +1,65 @@
+{
+  "method": "pure_random_uniform",
+  "n_output": 50,
+  "requested_n_output": 50,
+  "seed": 42,
+  "continuous_cols": [
+    "A_Cell_D",
+    "C_Barrier_Thx",
+    "E_Barrier_Outer_Thx",
+    "F_ThermalResin_Thx"
+  ],
+  "continuous_bounds": {
+    "A_Cell_D": [
+      12.0,
+      20.0
+    ],
+    "C_Barrier_Thx": [
+      0.25,
+      2.0
+    ],
+    "E_Barrier_Outer_Thx": [
+      1.1,
+      3.0
+    ],
+    "F_ThermalResin_Thx": [
+      0.5,
+      2.5
+    ]
+  },
+  "discrete_cols": [
+    "B_Barrier_Type",
+    "D_Barrier_Outer_Type"
+  ],
+  "discrete_levels": {
+    "B_Barrier_Type": [
+      "Si1"
+    ],
+    "D_Barrier_Outer_Type": [
+      "PU",
+      "Si1"
+    ]
+  },
+  "discrete_counts": {
+    "B_Barrier_Type": {
+      "Si1": 50
+    },
+    "D_Barrier_Outer_Type": {
+      "Si1": 29,
+      "PU": 21
+    }
+  },
+  "interaction_terms": [
+    [
+      "A_Cell_D",
+      "F_ThermalResin_Thx",
+      "CellD_x_Resin"
+    ],
+    [
+      "C_Barrier_Thx",
+      "E_Barrier_Outer_Thx",
+      "Barrier_x_Outer"
+    ]
+  ],
+  "note": "No predictive model, acquisition score, or optimization logic used."
+}

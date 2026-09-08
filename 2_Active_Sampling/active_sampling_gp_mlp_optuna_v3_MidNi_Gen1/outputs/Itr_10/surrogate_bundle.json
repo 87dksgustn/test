@@ -1,0 +1,86 @@
+{
+  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\\outputs\\Try_1\\surrogate_bundle.pkl",
+  "created_at": "2026-09-04T15:25:52",
+  "config": {
+    "base_continuous_cols": [
+      "A_Cell_D",
+      "C_Barrier_Thx",
+      "F_ThermalResin_Thx",
+      "G_CoolantLPM"
+    ],
+    "continuous_cols": [
+      "A_Cell_D",
+      "C_Barrier_Thx",
+      "F_ThermalResin_Thx",
+      "G_CoolantLPM",
+      "CellD_x_Resin"
+    ],
+    "discrete_cols": [
+      "B_Barrier_Type"
+    ],
+    "interaction_terms": [
+      [
+        "A_Cell_D",
+        "F_ThermalResin_Thx",
+        "CellD_x_Resin"
+      ]
+    ],
+    "continuous_bounds": {
+      "A_Cell_D": [
+        10.0,
+        16.0
+      ],
+      "C_Barrier_Thx": [
+        1.0,
+        3.0
+      ],
+      "F_ThermalResin_Thx": [
+        1.2,
+        3.0
+      ],
+      "G_CoolantLPM": [
+        0.0,
+        30.0
+      ],
+      "CellD_x_Resin": [
+        10.0,
+        48.0
+      ]
+    },
+    "discrete_levels": {
+      "B_Barrier_Type": [
+        "ETI"
+      ]
+    },
+    "other_regression_cols": [
+      "MaxT_TB_Top",
+      "MaxT_TB_Btm",
+      "MaxT_Adj_Y",
+      "MaxT_Adj_Z",
+      "Max_Power"
+    ],
+    "time_feature_cols": [
+      "Time_MaxT"
+    ],
+    "tmax_col": "MaxT_TB_Center",
+    "tmax_output_label": "MaxT_Adj",
+    "tp_label": 1,
+    "notp_label": 0,
+    "pass_label": 0,
+    "fail_label": 1,
+    "model_mode": "hybrid",
+    "input_csv": "Itr_9_Dataset.csv"
+  },
+  "metadata": {
+    "model_id": "surrogate-a88bb48409f5",
+    "try_dir": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\\outputs\\Try_1",
+    "try_name": "Try_1",
+    "selected_model": "hybrid",
+    "selected_model_kind": "hybrid",
+    "input_csv": "Itr_9_Dataset.csv",
+    "final_test_csv": "",
+    "train_row_count": 246,
+    "random_seed": 42,
+    "model_selection_mode": "hybrid"
+  }
+}

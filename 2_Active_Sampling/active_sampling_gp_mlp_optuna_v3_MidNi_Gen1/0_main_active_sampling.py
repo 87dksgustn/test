@@ -487,6 +487,59 @@ def create_try_dir(output_dir):
     return try_dir
 
 
+def resolve_final_test_csv_path(cfg):
+    """Resolve final-test CSV path from config or auto-detect candidates.
+
+    Returns:
+        tuple[Path|None, str, str]: (path, source, note)
+        source: "config" | "auto" | "none"
+    """
+    configured = str(getattr(cfg, "FINAL_TEST_CSV", "") or "").strip()
+    if configured:
+        p = Path(configured)
+        if p.exists() and p.is_file():
+            return p, "config", "Using FINAL_TEST_CSV from config."
+        return None, "none", f"Configured FINAL_TEST_CSV not found: {p}"
+
+    search_dirs = [Path(cfg.OUTPUT_DIR) / "final_test_doe", Path(".")]
+    candidates = []
+    for d in search_dirs:
+        if not d.exists() or not d.is_dir():
+            continue
+        for p in d.glob("*.csv"):
+            name = p.name.lower()
+            if "report" in name or "summary" in name:
+                continue
+            # Skip obvious training iteration datasets.
+            if name.startswith("itr_"):
+                continue
+            try:
+                cols = pd.read_csv(p, nrows=0).columns.tolist()
+            except Exception:
+                continue
+
+            has_targets = (cfg.TPNoTP_COL in cols) and (cfg.TMAX_COL in cols)
+            name_score = int("final_test" in name or "holdout" in name)
+            try:
+                mtime = p.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            candidates.append((int(has_targets), name_score, mtime, p, cols))
+
+    if not candidates:
+        return None, "none", "No candidate final-test CSV found."
+
+    candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    best_has_targets, _, _, best_path, best_cols = candidates[0]
+    if best_has_targets:
+        return best_path, "auto", "Auto-detected labeled final-test CSV."
+
+    return None, "none", (
+        "Candidate final-test CSV files exist but required label columns are missing "
+        f"({cfg.TPNoTP_COL}, {cfg.TMAX_COL}). Best candidate: {best_path.name}, cols={best_cols}"
+    )
+
+
 def normalized_range_stats(df, cfg):
     vals = []
     for col in cfg.CONTINUOUS_COLS:
@@ -981,7 +1034,14 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png, context_label="
     return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
 
 
-def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir, context_label="Holdout, NoTP only"):
+def save_holdout_extra_outputs_plots(
+    y_extra_true,
+    y_extra_pred,
+    extra_cols,
+    output_dir,
+    context_label="Holdout, NoTP only",
+    output_filename="extra_outputs_actual_vs_pred_holdout.png",
+):
     """Save actual vs predicted plots for extra regression outputs.
     
     Args:
@@ -1005,7 +1065,7 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         return {}
     
     all_metrics = {}
-    colors = ["#4C78A8", "#F58518", "#54A24B"]  # Blue, Orange, Green
+    colors = ["#4C78A8", "#F58518", "#54A24B", "#E45756"]  # Blue, Orange, Green, Red
     
     for i, col in enumerate(extra_cols):
         yt = y_extra_true[:, i]
@@ -1029,14 +1089,31 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         # Individual metric values are kept for logging/reporting,
         # while plotting is consolidated into a single multi-panel figure below.
     
-    # Create combined 3-panel plot.
-    # Prefer Max_Power as the 3rd panel when available.
-    if len(extra_cols) >= 3:
-        plot_cols = list(extra_cols[:3])
+    # Create combined 4-panel plot.
+    # Preferred panel order: first two extras + Max_Power + Time_MaxT (if available).
+    if len(extra_cols) >= 1:
+        preferred = []
+        preferred.extend(list(extra_cols[:2]))
         if "Max_Power" in extra_cols:
-            plot_cols = [extra_cols[0], extra_cols[1], "Max_Power"]
+            preferred.append("Max_Power")
+        if "Time_MaxT" in extra_cols:
+            preferred.append("Time_MaxT")
 
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=150)
+        plot_cols = []
+        for col in preferred + list(extra_cols):
+            if col not in plot_cols:
+                plot_cols.append(col)
+            if len(plot_cols) >= 4:
+                break
+
+        n_panels = len(plot_cols)
+        if n_panels == 4:
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9), dpi=150)
+            axes = axes.flatten()
+        else:
+            fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 5), dpi=150)
+            if n_panels == 1:
+                axes = [axes]
         for i, col in enumerate(plot_cols):
             ax = axes[i]
             src_idx = extra_cols.index(col)
@@ -1051,7 +1128,7 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
                 ax.set_title(col, fontsize=12, fontweight="bold")
                 continue
             
-            ax.scatter(yt_valid, yp_valid, s=40, alpha=0.7, edgecolors="black", linewidths=0.3, c=colors[i])
+            ax.scatter(yt_valid, yp_valid, s=40, alpha=0.7, edgecolors="black", linewidths=0.3, c=colors[i % len(colors)])
             data_range = max(yt_valid.max() - yt_valid.min(), yp_valid.max() - yp_valid.min())
             margin = max(data_range * 0.05, 0.001)
             lims = [min(yt_valid.min(), yp_valid.min()) - margin, max(yt_valid.max(), yp_valid.max()) + margin]
@@ -1067,9 +1144,9 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
             ax.set_title(f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.4f}" if abs(rmse_val) < 10 else f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.2f}", fontsize=12, fontweight="bold")
             ax.grid(True, alpha=0.3)
         
-        fig.suptitle(f"Extra Outputs: Actual vs Predicted ({context_label})", fontsize=14, fontweight="bold", y=1.02)
-        fig.tight_layout()
-        combined_png = output_dir / "extra_outputs_actual_vs_pred_holdout.png"
+        fig.suptitle(f"Extra Outputs: Actual vs Predicted ({context_label})", fontsize=14, fontweight="bold", y=0.98)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        combined_png = output_dir / str(output_filename)
         fig.savefig(combined_png, dpi=180, bbox_inches="tight")
         plt.close(fig)
         print(f"[INFO] Saved combined extra outputs plot: {combined_png}")
@@ -1845,6 +1922,13 @@ def main():
         json.dump(tuned["report"], f, indent=2, ensure_ascii=False)
     print("[INFO] Optuna report:"); print(json.dumps(tuned["report"], indent=2, ensure_ascii=False))
     selected_model, selection_report, fold_results = select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned, extra_cols=extra_cols)
+
+    resolved_final_test_csv, final_test_csv_source, final_test_csv_note = resolve_final_test_csv_path(config)
+    if resolved_final_test_csv is not None:
+        print(f"[INFO] Final test CSV resolved ({final_test_csv_source}): {resolved_final_test_csv}")
+    else:
+        print(f"[WARN] Final test CSV unavailable: {final_test_csv_note}")
+
     with open(output_model_selection_json, "w", encoding="utf-8") as f:
         json.dump(selection_report, f, indent=2, ensure_ascii=False)
     fold_df = fold_metrics_to_df(fold_results)
@@ -1887,7 +1971,9 @@ def main():
         "selected_model": str(selection_report.get("selected_model", getattr(selected_model, "kind", "gp"))),
         "selected_model_kind": str(getattr(selected_model, "kind", "gp")),
         "input_csv": str(config.INPUT_CSV),
-        "final_test_csv": str(getattr(config, "FINAL_TEST_CSV", "")),
+        "final_test_csv": str(resolved_final_test_csv) if resolved_final_test_csv is not None else "",
+        "final_test_csv_source": final_test_csv_source,
+        "final_test_csv_note": final_test_csv_note,
         "train_row_count": int(len(df)),
         "random_seed": int(config.RANDOM_SEED),
         "model_selection_mode": str(getattr(config, "MODEL_MODE", "")),
@@ -2072,13 +2158,15 @@ def main():
     cv_diag_segments_csv = performance_dir / "cv_boundary_segment_metrics.csv"
     cv_diag_groups_csv = performance_dir / "cv_combo_group_metrics.csv"
     cv_diag_bins_csv = performance_dir / "cv_probability_bin_metrics.csv"
+    cv_cm_png = performance_dir / "tp_notp_cv_confusion_matrix.png"
+    cv_tmax_png = performance_dir / "tmax_actual_vs_pred_cv.png"
     holdout_cm_png = performance_dir / "tp_notp_holdout_confusion_matrix.png"
     holdout_tmax_png = performance_dir / "tmax_actual_vs_pred_holdout.png"
 
-    final_test_csv = getattr(config, "FINAL_TEST_CSV", None)
+    final_test_csv = resolved_final_test_csv
     cm_metrics = None
     tmax_metrics = None
-    performance_source = "holdout"
+    performance_source = "final_test"
     y_holdout_class = None
     y_holdout_pred_class = None
     cv_oof_df = None
@@ -2171,6 +2259,50 @@ def main():
     except Exception as e:
         print(f"[WARN] CV diagnostics dashboard generation failed: {e}")
 
+    # Always save CV-based performance figures (OOF), regardless of holdout availability.
+    if cv_oof_df is not None and len(cv_oof_df):
+        cv_y_true = cv_oof_df["actual_label"].to_numpy(dtype=int)
+        cv_y_pred = cv_oof_df["oof_predicted_label"].to_numpy(dtype=int)
+        cv_cm_metrics_plot = save_holdout_confusion_matrix(cv_y_true, cv_y_pred, cv_cm_png, config, context_label="CV OOF")
+        print(f"[INFO] Saved CV confusion matrix: {cv_cm_png}")
+        print(f"[INFO] CV classification metrics: {cv_cm_metrics_plot}")
+
+        cv_notp_mask = (cv_y_true == config.PASS_LABEL)
+        if int(cv_notp_mask.sum()) > 0 and "oof_tmax_pred" in cv_oof_df.columns:
+            cv_tmax_metrics_plot = save_holdout_tmax_actual_vs_pred(
+                cv_oof_df.loc[cv_notp_mask, config.TMAX_COL].to_numpy(dtype=float),
+                cv_oof_df.loc[cv_notp_mask, "oof_tmax_pred"].to_numpy(dtype=float),
+                cv_tmax_png,
+                context_label="CV OOF, NoTP only",
+            )
+            print(f"[INFO] Saved CV Tmax plot: {cv_tmax_png}")
+            print(f"[INFO] CV Tmax metrics: {cv_tmax_metrics_plot}")
+
+        extra_cols = list(getattr(config, "OTHER_REGRESSION_COLS", [])) + list(getattr(config, "TIME_FEATURE_COLS", []))
+        if extra_cols:
+            y_extra_true_cols = []
+            y_extra_pred_cols = []
+            avail_extra_cols = []
+            for col in extra_cols:
+                pred_col = f"oof_{col}_pred"
+                if col in cv_oof_df.columns and pred_col in cv_oof_df.columns:
+                    y_extra_true_cols.append(cv_oof_df.loc[cv_notp_mask, col].to_numpy(dtype=float))
+                    y_extra_pred_cols.append(cv_oof_df.loc[cv_notp_mask, pred_col].to_numpy(dtype=float))
+                    avail_extra_cols.append(col)
+            if y_extra_true_cols and len(y_extra_true_cols) == len(y_extra_pred_cols):
+                y_extra_true = np.column_stack(y_extra_true_cols)
+                y_extra_pred = np.column_stack(y_extra_pred_cols)
+                extra_metrics = save_holdout_extra_outputs_plots(
+                    y_extra_true,
+                    y_extra_pred,
+                    avail_extra_cols,
+                    performance_dir,
+                    context_label="CV OOF, NoTP only",
+                    output_filename="extra_outputs_actual_vs_pred_cv.png",
+                )
+                print(f"[INFO] Saved CV extra outputs plot: {performance_dir / 'extra_outputs_actual_vs_pred_cv.png'}")
+                print(f"[INFO] CV extra outputs metrics: {extra_metrics}")
+
     if final_test_csv and Path(final_test_csv).exists():
         print(f"[INFO] Loading holdout test set: {final_test_csv}")
         holdout_df = load_labeled_data(final_test_csv)
@@ -2185,7 +2317,13 @@ def main():
             holdout_pred = predict_outputs(selected_model, x_holdout)
             y_holdout_pred_class = (np.asarray(holdout_pred["p_tp"], dtype=float) >= 0.5).astype(int)
 
-            cm_metrics = save_holdout_confusion_matrix(y_holdout_class, y_holdout_pred_class, holdout_cm_png, config)
+            cm_metrics = save_holdout_confusion_matrix(
+                y_holdout_class,
+                y_holdout_pred_class,
+                holdout_cm_png,
+                config,
+                context_label="Final test",
+            )
             print(f"[INFO] Saved holdout confusion matrix: {holdout_cm_png}")
             print(f"[INFO] Holdout classification metrics: {cm_metrics}")
 
@@ -2243,6 +2381,7 @@ def main():
                     y_holdout_tmax[notp_mask],
                     np.asarray(holdout_pred["tmax_pred"], dtype=float)[notp_mask],
                     holdout_tmax_png,
+                    context_label="Final test, NoTP only",
                 )
                 print(f"[INFO] Saved holdout Tmax plot: {holdout_tmax_png}")
                 print(f"[INFO] Holdout Tmax metrics: {tmax_metrics}")
@@ -2268,7 +2407,7 @@ def main():
                     save_cv_vs_holdout_comparison_plot(cv_metrics_for_plot, holdout_full_metrics, cv_holdout_png, title_prefix=model_name)
                 
                 # === Extra Outputs Plots ===
-                extra_cols = config.OTHER_REGRESSION_COLS
+                extra_cols = list(getattr(config, "OTHER_REGRESSION_COLS", [])) + list(getattr(config, "TIME_FEATURE_COLS", []))
                 if extra_cols and len(extra_cols) > 0:
                     # Get actual extra values from holdout data
                     y_extra_holdout, _ = make_extra_targets(holdout_df, extra_cols, [])
@@ -2282,6 +2421,8 @@ def main():
                             y_extra_pred_notp,
                             extra_cols,
                             performance_dir,
+                            context_label="Final test, NoTP only",
+                            output_filename="extra_outputs_actual_vs_pred_holdout.png",
                         )
                         print(f"[INFO] Extra outputs holdout metrics: {extra_metrics}")
                     else:
@@ -2291,17 +2432,13 @@ def main():
         except Exception as e:
             print(f"[WARN] Holdout evaluation failed: {e}")
     else:
-        print(f"[WARN] FINAL_TEST_CSV not set or file not found. Skipping holdout evaluation.")
+        print(f"[WARN] FINAL_TEST_CSV not set/found (or auto-detect failed). Skipping final-test evaluation.")
 
     if (cm_metrics is None or tmax_metrics is None) and cv_oof_df is not None and len(cv_oof_df):
-        cv_cm_png = performance_dir / "tp_notp_holdout_confusion_matrix.png"
-        cv_tmax_png = performance_dir / "tmax_actual_vs_pred_holdout.png"
-
         cv_y_true = cv_oof_df["actual_label"].to_numpy(dtype=int)
         cv_y_pred = cv_oof_df["oof_predicted_label"].to_numpy(dtype=int)
         cm_metrics = save_holdout_confusion_matrix(cv_y_true, cv_y_pred, cv_cm_png, config, context_label="CV fallback")
-        print(f"[INFO] Saved CV fallback confusion matrix: {cv_cm_png}")
-        print(f"[INFO] CV fallback classification metrics: {cm_metrics}")
+        print(f"[INFO] Using CV fallback classification metrics: {cm_metrics}")
 
         cv_notp_mask = (cv_y_true == config.PASS_LABEL)
         if int(cv_notp_mask.sum()) > 0 and "oof_tmax_pred" in cv_oof_df.columns:
@@ -2311,32 +2448,7 @@ def main():
                 cv_tmax_png,
                 context_label="CV fallback, NoTP only",
             )
-            print(f"[INFO] Saved CV fallback Tmax plot: {cv_tmax_png}")
-            print(f"[INFO] CV fallback Tmax metrics: {tmax_metrics}")
-
-        extra_cols = list(getattr(config, "OTHER_REGRESSION_COLS", []))
-        if extra_cols:
-            y_extra_true_cols = []
-            y_extra_pred_cols = []
-            avail_extra_cols = []
-            for col in extra_cols:
-                pred_col = f"oof_{col}_pred"
-                if col in cv_oof_df.columns and pred_col in cv_oof_df.columns:
-                    y_extra_true_cols.append(cv_oof_df.loc[cv_notp_mask, col].to_numpy(dtype=float))
-                    y_extra_pred_cols.append(cv_oof_df.loc[cv_notp_mask, pred_col].to_numpy(dtype=float))
-                    avail_extra_cols.append(col)
-            if y_extra_true_cols and len(y_extra_true_cols) == len(y_extra_pred_cols):
-                y_extra_true = np.column_stack(y_extra_true_cols)
-                y_extra_pred = np.column_stack(y_extra_pred_cols)
-                extra_metrics = save_holdout_extra_outputs_plots(
-                    y_extra_true,
-                    y_extra_pred,
-                    avail_extra_cols,
-                    performance_dir,
-                    context_label="CV fallback, NoTP only",
-                )
-                print(f"[INFO] Saved CV fallback extra outputs plot: {performance_dir / 'extra_outputs_actual_vs_pred_holdout.png'}")
-                print(f"[INFO] CV fallback extra outputs metrics: {extra_metrics}")
+            print(f"[INFO] Using CV fallback Tmax metrics: {tmax_metrics}")
 
     if cm_metrics is None or tmax_metrics is None:
         cv_cm_metrics, cv_tmax_metrics = _build_cv_fallback_metrics(selection_report, getattr(selected_model, "kind", "gp"))
@@ -2346,7 +2458,7 @@ def main():
             tmax_metrics = cv_tmax_metrics
         if cm_metrics is not None or tmax_metrics is not None:
             performance_source = "cv_fallback"
-            print("[INFO] Holdout metrics are unavailable. Using CV metrics fallback for iteration summary/trend.")
+            print("[INFO] Final-test metrics are unavailable. Using CV metrics fallback for iteration summary/trend.")
 
     # === Save iteration summary for cumulative tracking ===
     bucket_counts_actual = selected["selected_bucket"].value_counts().to_dict() if "selected_bucket" in selected.columns else {}
@@ -2410,7 +2522,7 @@ def main():
     }
 
     # Extract confusion matrix counts if available
-    if performance_source == "holdout" and cm_metrics and final_test_csv and Path(final_test_csv).exists():
+    if performance_source == "final_test" and cm_metrics and final_test_csv and Path(final_test_csv).exists():
         from sklearn.metrics import confusion_matrix as sk_cm
         try:
             cm_arr = sk_cm(y_holdout_class, y_holdout_pred_class, labels=[config.NOTP_LABEL, config.TP_LABEL])

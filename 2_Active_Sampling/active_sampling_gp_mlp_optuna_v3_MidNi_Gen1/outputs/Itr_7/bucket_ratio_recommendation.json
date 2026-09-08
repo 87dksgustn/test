@@ -1,0 +1,18 @@
+{
+  "current_bucket_ratio": {
+    "boundary": 0.5952380952380952,
+    "notp_high_tmax": 0.22222222222222224,
+    "misclass_repair": 0.09920634920634921,
+    "uncertainty_sparse": 0.04960317460317461,
+    "random_check": 0.033730158730158735
+  },
+  "recommended_bucket_ratio": {
+    "boundary": 0.6643078283945157,
+    "notp_high_tmax": 0.2063983488132095,
+    "misclass_repair": 0.09214212000589711,
+    "uncertainty_sparse": 0.018575851393188854,
+    "random_check": 0.018575851393188854
+  },
+  "decision": "severe_degradation",
+  "reason": "decision=severe_degradation; f1_delta=-0.0400; recall_delta=-0.0478; rmse_delta_pct=2.30; unc_high=0.100"
+}

@@ -1,0 +1,61 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": true,
+    "mlp_optuna_eligible": true,
+    "n_total": 328,
+    "n_notp": 164,
+    "n_tp": 164
+  },
+  "gp": {
+    "best_value": 0.8282998243805569,
+    "n_trials": 30,
+    "best_params": {
+      "kernel": "RBF",
+      "constant": 0.5404103854647329,
+      "length_scale": 1.4253164479427205
+    },
+    "use_ard_in_optuna": false
+  },
+  "mlp": {
+    "best_value": 0.8560327473642034,
+    "n_trials": 20,
+    "best_params": {
+      "n_layers": 2,
+      "width": 256,
+      "dropout": 0.05352724663535691,
+      "learning_rate": 0.0017506960118095353,
+      "weight_decay": 0.00018930532050950077,
+      "tmax_loss_weight": 0.6302711461541259,
+      "hidden_dims": [
+        256,
+        256
+      ]
+    },
+    "gate": {
+      "min_tp_recall": 0.2,
+      "min_tp_f1": 0.15,
+      "max_tmax_rmse": null,
+      "min_tmax_r2": null,
+      "tmax_tiebreak_weight": 0.01,
+      "trials_total": 20,
+      "trials_passed_gate": 20,
+      "trials_failed_gate": 0
+    }
+  },
+  "tmax": {
+    "best_value_rmse": 1.800012523587555,
+    "n_trials": 25,
+    "best_params": {
+      "kernel": "Matern52",
+      "constant": 0.19010245319870356,
+      "length_scale": 1.0443637282051204,
+      "noise_level": 6.7890532716984874e-06,
+      "alpha": 5.450293694558259e-08,
+      "normalize_y": true
+    },
+    "objective": "minimize_noTP_tmax_rmse",
+    "use_ard_in_optuna": false
+  }
+}

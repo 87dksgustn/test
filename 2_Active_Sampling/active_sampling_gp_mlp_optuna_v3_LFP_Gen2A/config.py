@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Itr_7_Dataset.csv"
+INPUT_CSV = "Itr_12_Dataset.csv"
 FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
@@ -313,9 +313,7 @@ MODEL_COMPARE_CV_WEIGHT = 0.30
 MODEL_COMPARE_HOLDOUT_WEIGHT = 0.70
 MODEL_COMPARE_HOLDOUT_TEST_SIZE = 0.20
 
-# Temporary switch: skip holdout scoring/plots while preserving code path.
-# Set True when final test evaluation is needed again.
-ENABLE_HOLDOUT_EVAL = False
+ENABLE_HOLDOUT_EVAL = True
 
 # Batch size auto-recommendation settings
 BATCH_SIZE_DECISION_WINDOW = 3  # Number of recent iterations to consider

@@ -1,0 +1,88 @@
+{
+  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2A\\outputs\\latest_surrogate_bundle.pkl",
+  "created_at": "2026-09-07T16:32:14",
+  "config": {
+    "base_continuous_cols": [
+      "A_Cell_D",
+      "C_Barrier_Thx",
+      "E_Barrier_Outer_Thx",
+      "F_ThermalResin_Thx"
+    ],
+    "continuous_cols": [
+      "A_Cell_D",
+      "C_Barrier_Thx",
+      "E_Barrier_Outer_Thx",
+      "F_ThermalResin_Thx",
+      "CellD_x_Resin",
+      "Barrier_x_Outer"
+    ],
+    "discrete_cols": [
+      "B_Barrier_Type",
+      "D_Barrier_Outer_Type"
+    ],
+    "interaction_terms": [
+      [
+        "A_Cell_D",
+        "F_ThermalResin_Thx",
+        "CellD_x_Resin"
+      ],
+      [
+        "C_Barrier_Thx",
+        "E_Barrier_Outer_Thx",
+        "Barrier_x_Outer"
+      ]
+    ],
+    "continuous_bounds": {
+      "A_Cell_D": [
+        12.0,
+        20.0
+      ],
+      "C_Barrier_Thx": [
+        0.25,
+        2.0
+      ],
+      "E_Barrier_Outer_Thx": [
+        1.1,
+        3.0
+      ],
+      "F_ThermalResin_Thx": [
+        0.5,
+        2.5
+      ],
+      "CellD_x_Resin": [
+        6.0,
+        50.0
+      ],
+      "Barrier_x_Outer": [
+        0.275,
+        7.5
+      ]
+    },
+    "discrete_levels": {
+      "B_Barrier_Type": [
+        "Si1"
+      ],
+      "D_Barrier_Outer_Type": [
+        "PU",
+        "Si1"
+      ]
+    },
+    "other_regression_cols": [
+      "MaxT_Adj_Y",
+      "MaxT_Adj_Z",
+      "Max_Power"
+    ],
+    "time_feature_cols": [],
+    "tp_label": 1,
+    "notp_label": 0,
+    "pass_label": 0,
+    "fail_label": 1,
+    "model_mode": "hybrid",
+    "input_csv": "Itr_12_Dataset.csv"
+  },
+  "metadata": {
+    "selected_model": "hybrid",
+    "input_csv": "Itr_12_Dataset.csv",
+    "try_dir": "outputs\\Try_1"
+  }
+}

@@ -22,8 +22,10 @@ from diagnostics import combo_diagnostics
 from optuna_tuning import maybe_tune_models
 from model_selector import select_and_fit_model
 from evaluation import fold_metrics_to_df
+from metrics_utils import classification_metrics
 from acquisition import compute_acquisition_scores, compute_misclass_repair_score
 from batch_selector import bucket_counts, select_batch
+from surrogate_bundle import save_bundle_metadata, save_surrogate_bundle, load_surrogate_bundle
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +42,301 @@ def add_interaction_terms(df, interaction_terms):
         if col1 in df.columns and col2 in df.columns:
             df[new_col] = df[col1].astype(float) * df[col2].astype(float)
     return df
+
+
+def compute_coverage_diagnostics(df, continuous_cols, continuous_bounds, grid_bins=4):
+    from sklearn.neighbors import NearestNeighbors
+
+    cols = [c for c in continuous_cols if c in df.columns and c in continuous_bounds]
+    if not cols or len(df) == 0:
+        return df.iloc[0:0].copy(), {}
+
+    cov_df = df.copy()
+    norm_arrs = []
+    for col in cols:
+        lo, hi = continuous_bounds[col]
+        span = max(float(hi) - float(lo), 1e-12)
+        vals = pd.to_numeric(cov_df[col], errors="coerce").to_numpy(dtype=float)
+        norm_arrs.append(((vals - float(lo)) / span).reshape(-1, 1))
+    x_norm = np.hstack(norm_arrs)
+
+    if len(cov_df) >= 2:
+        nn = NearestNeighbors(n_neighbors=2).fit(x_norm)
+        dist, _ = nn.kneighbors(x_norm)
+        cov_df["local_nn_dist"] = dist[:, 1]
+    else:
+        cov_df["local_nn_dist"] = 0.0
+
+    grid_codes = []
+    for idx, col in enumerate(cols):
+        clipped = np.clip(x_norm[:, idx], 0.0, 1.0)
+        grid_codes.append(pd.cut(clipped, bins=grid_bins, labels=False, include_lowest=True))
+    grid_df = pd.DataFrame({col: grid_codes[i] for i, col in enumerate(cols)})
+    cell_keys = grid_df.astype("Int64").astype(str).agg("_".join, axis=1)
+    cell_counts = cell_keys.value_counts()
+
+    coverage_summary = {
+        "n_rows": int(len(cov_df)),
+        "occupied_cells": int((cell_counts > 0).sum()),
+        "cells_with_1_sample": int((cell_counts == 1).sum()),
+        "cells_with_2_or_more": int((cell_counts >= 2).sum()),
+        "max_cell_count": int(cell_counts.max()) if len(cell_counts) else 0,
+        "median_cell_count": float(cell_counts.median()) if len(cell_counts) else 0.0,
+        "mean_nn_dist": float(cov_df["local_nn_dist"].mean()) if len(cov_df) else np.nan,
+        "q75_nn_dist": float(cov_df["local_nn_dist"].quantile(0.75)) if len(cov_df) else np.nan,
+        "q90_nn_dist": float(cov_df["local_nn_dist"].quantile(0.90)) if len(cov_df) else np.nan,
+    }
+    cov_df["coverage_cell_key"] = cell_keys
+    return cov_df, coverage_summary
+
+
+def fit_selected_model_for_oof(selected_kind, selection_report, tuned_params, xtr, ytr, ttr, etr, cfg, extra_cols, seed):
+    from models_gp import fit_gp_models, HybridModels
+    from models_mlp import fit_mlp_ensemble
+
+    gp_params = tuned_params.get("gp_params")
+    tmax_params = tuned_params.get("tmax_params")
+    mlp_params = tuned_params.get("mlp_params")
+    extra_cols = extra_cols or []
+
+    def fit_gp_part():
+        return fit_gp_models(
+            xtr,
+            ytr,
+            ttr,
+            pass_label=cfg.PASS_LABEL,
+            random_state=seed,
+            gp_params=gp_params,
+            tmax_params=tmax_params,
+            clf_uncertainty_mode=getattr(cfg, "GP_CLF_UNCERTAINTY_MODE", "none"),
+            clf_ensemble_size=getattr(cfg, "GP_CLF_ENSEMBLE_SIZE", 5),
+            clf_ensemble_sample_ratio=getattr(cfg, "GP_CLF_ENSEMBLE_SAMPLE_RATIO", 0.8),
+            clf_ensemble_stratified=getattr(cfg, "GP_CLF_ENSEMBLE_STRATIFIED", True),
+            use_ard=getattr(cfg, "GP_USE_ARD", True),
+            y_extra=etr,
+            extra_cols=extra_cols,
+        )
+
+    def fit_mlp_part():
+        return fit_mlp_ensemble(xtr, ytr, ttr, etr, cfg, seed=seed, params=mlp_params, extra_cols=extra_cols)
+
+    if selected_kind == "gp":
+        return fit_gp_part()
+    if selected_kind == "mlp":
+        return fit_mlp_part()
+
+    hybrid_sel = selection_report.get("hybrid_selection") or {}
+    clf_winner = str(hybrid_sel.get("classifier", {}).get("winner", "gp")).lower()
+    tmax_winner = str(hybrid_sel.get("tmax", {}).get("winner", "gp")).lower()
+    extra_winners = {
+        col: str((hybrid_sel.get("extras", {}) or {}).get(col, {}).get("winner", "gp")).lower()
+        for col in extra_cols
+    }
+
+    gp_models = fit_gp_part()
+    mlp_needed = clf_winner == "mlp" or tmax_winner == "mlp" or any(v == "mlp" for v in extra_winners.values())
+    mlp_models = fit_mlp_part() if mlp_needed else None
+
+    clf_model = mlp_models if clf_winner == "mlp" and mlp_models is not None else gp_models
+    tmax_model = mlp_models if tmax_winner == "mlp" and mlp_models is not None else gp_models
+    extra_models = {}
+    for col in extra_cols:
+        winner = extra_winners.get(col, "gp")
+        if winner == "mlp" and mlp_models is not None:
+            extra_models[col] = (mlp_models, "mlp")
+        else:
+            extra_models[col] = (gp_models, "gp")
+
+    return HybridModels(
+        clf_model=clf_model,
+        clf_kind=clf_winner,
+        tmax_model=tmax_model,
+        tmax_kind=tmax_winner,
+        extra_models=extra_models,
+        extra_cols=extra_cols,
+        selection_report=hybrid_sel,
+    )
+
+
+def build_cv_oof_diagnostics(df, x_train, y_class, y_tmax, y_extra, cfg, tuned_params, selected_kind, selection_report, extra_cols=None):
+    from sklearn.model_selection import StratifiedKFold
+    from acquisition import predict_outputs
+
+    y = np.asarray(y_class, dtype=int)
+    class_counts = pd.Series(y).value_counts()
+    splits = min(int(getattr(cfg, "CV_SPLITS", 5)), int(class_counts.min())) if len(class_counts) > 1 else 0
+    if splits < 2:
+        return df.iloc[0:0].copy()
+
+    cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=int(getattr(cfg, "RANDOM_SEED", 42)))
+    oof_p_tp = np.full(len(df), np.nan, dtype=float)
+    oof_pred = np.full(len(df), -1, dtype=int)
+    oof_tmax_pred = np.full(len(df), np.nan, dtype=float)
+
+    for fold, (tr, va) in enumerate(cv.split(x_train, y)):
+        model = fit_selected_model_for_oof(
+            selected_kind,
+            selection_report,
+            tuned_params,
+            x_train[tr],
+            y[tr],
+            np.asarray(y_tmax)[tr],
+            None if y_extra is None else np.asarray(y_extra)[tr],
+            cfg,
+            extra_cols,
+            int(getattr(cfg, "RANDOM_SEED", 42)) + fold * 101,
+        )
+        pred = predict_outputs(model, x_train[va])
+        p_tp = np.asarray(pred["p_tp"], dtype=float)
+        oof_p_tp[va] = p_tp
+        oof_pred[va] = (p_tp >= 0.5).astype(int)
+        if "tmax_pred" in pred:
+            oof_tmax_pred[va] = np.asarray(pred["tmax_pred"], dtype=float)
+
+    out = df.copy()
+    out["actual_label"] = y
+    out["oof_p_tp"] = oof_p_tp
+    out["oof_p_notp"] = 1.0 - oof_p_tp
+    out["oof_predicted_label"] = oof_pred
+    out["oof_is_error"] = (oof_pred >= 0) & (oof_pred != y)
+    out["oof_tmax_pred"] = oof_tmax_pred
+
+    boundary_low = float(getattr(cfg, "BOUNDARY_DIAG_PTP_LOW", 0.40))
+    boundary_high = float(getattr(cfg, "BOUNDARY_DIAG_PTP_HIGH", 0.60))
+    out["is_boundary_band"] = out["oof_p_tp"].between(boundary_low, boundary_high, inclusive="both")
+    out["ptp_distance_from_boundary"] = np.abs(out["oof_p_tp"] - 0.5)
+    return out
+
+
+def save_cv_diagnostics_dashboard(oof_df, coverage_summary, output_png, cfg):
+    if len(oof_df) == 0:
+        return False, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    boundary_low = float(getattr(cfg, "BOUNDARY_DIAG_PTP_LOW", 0.40))
+    boundary_high = float(getattr(cfg, "BOUNDARY_DIAG_PTP_HIGH", 0.60))
+    actual = oof_df["actual_label"].to_numpy(dtype=int)
+    pred = oof_df["oof_predicted_label"].to_numpy(dtype=int)
+
+    segment_defs = [
+        ("Boundary", oof_df["is_boundary_band"].to_numpy(dtype=bool)),
+        ("Non-boundary", (~oof_df["is_boundary_band"]).to_numpy(dtype=bool)),
+        ("Overall", np.ones(len(oof_df), dtype=bool)),
+    ]
+    segment_rows = []
+    for name, mask in segment_defs:
+        if int(mask.sum()) == 0:
+            segment_rows.append({"segment": name, "n": 0, "accuracy": np.nan, "tp_recall": np.nan, "tp_f1": np.nan, "error_rate": np.nan})
+            continue
+        m = classification_metrics(actual[mask], pred[mask], tp_label=cfg.TP_LABEL)
+        segment_rows.append({
+            "segment": name,
+            "n": int(mask.sum()),
+            "accuracy": float(m.get("accuracy", np.nan)),
+            "tp_recall": float(m.get("tp_recall", np.nan)),
+            "tp_f1": float(m.get("tp_f1", np.nan)),
+            "error_rate": float(np.mean(actual[mask] != pred[mask])),
+        })
+    segment_df = pd.DataFrame(segment_rows)
+
+    bin_rows = []
+    edges = np.linspace(0.0, 1.0, 6)
+    for i in range(len(edges) - 1):
+        lo, hi = edges[i], edges[i + 1]
+        if i == len(edges) - 2:
+            mask = (oof_df["oof_p_tp"] >= lo) & (oof_df["oof_p_tp"] <= hi)
+        else:
+            mask = (oof_df["oof_p_tp"] >= lo) & (oof_df["oof_p_tp"] < hi)
+        part = oof_df.loc[mask]
+        bin_rows.append({
+            "bin_label": f"{lo:.1f}-{hi:.1f}",
+            "bin_mid": (lo + hi) / 2.0,
+            "n": int(len(part)),
+            "error_rate": float(part["oof_is_error"].mean()) if len(part) else np.nan,
+            "is_boundary_bin": ((lo < boundary_high) and (hi > boundary_low)),
+        })
+    bin_df = pd.DataFrame(bin_rows)
+
+    group_col = "discrete_combo_id" if "discrete_combo_id" in oof_df.columns else (cfg.DISCRETE_COLS[-1] if getattr(cfg, "DISCRETE_COLS", None) else None)
+    group_rows = []
+    if group_col and group_col in oof_df.columns:
+        for group_name, part in oof_df.groupby(group_col, dropna=False):
+            m = classification_metrics(part["actual_label"].to_numpy(dtype=int), part["oof_predicted_label"].to_numpy(dtype=int), tp_label=cfg.TP_LABEL)
+            group_rows.append({
+                "group": str(group_name),
+                "n": int(len(part)),
+                "error_rate": float(part["oof_is_error"].mean()) if len(part) else np.nan,
+                "tp_recall": float(m.get("tp_recall", np.nan)),
+                "tp_f1": float(m.get("tp_f1", np.nan)),
+            })
+    group_df = pd.DataFrame(group_rows).sort_values(["tp_f1", "tp_recall", "n"], ascending=[True, True, False]) if group_rows else pd.DataFrame()
+
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    x = np.arange(len(segment_df))
+    width = 0.24
+    axes[0, 0].bar(x - width, segment_df["tp_recall"], width, label="TP Recall", color="#4C78A8")
+    axes[0, 0].bar(x, segment_df["tp_f1"], width, label="TP F1", color="#F58518")
+    axes[0, 0].bar(x + width, segment_df["accuracy"], width, label="Accuracy", color="#54A24B")
+    axes[0, 0].set_xticks(x)
+    axes[0, 0].set_xticklabels(segment_df["segment"])
+    axes[0, 0].set_ylim(0, 1.02)
+    axes[0, 0].set_title(f"CV OOF Boundary Diagnostics ({boundary_low:.1f}-{boundary_high:.1f})")
+    axes[0, 0].legend(loc="lower right", fontsize=9)
+    for i, row in segment_df.iterrows():
+        axes[0, 0].text(i, 0.03, f"n={int(row['n'])}", ha="center", va="bottom", fontsize=9, color="#374151")
+
+    bar_colors = ["#E45756" if flag else "#72B7B2" for flag in bin_df["is_boundary_bin"]]
+    axes[0, 1].bar(bin_df["bin_label"], bin_df["error_rate"], color=bar_colors, alpha=0.85)
+    ax2b = axes[0, 1].twinx()
+    ax2b.plot(bin_df["bin_label"], bin_df["n"], color="#4C78A8", marker="o", linewidth=2)
+    axes[0, 1].set_ylim(0, max(1.0, float(np.nanmax(bin_df["error_rate"].fillna(0))) * 1.25))
+    axes[0, 1].set_ylabel("Error rate")
+    ax2b.set_ylabel("Sample count")
+    axes[0, 1].set_title("OOF Error Rate by TP Probability Bin")
+    axes[0, 1].tick_params(axis="x", rotation=25)
+
+    if len(group_df):
+        plot_group_df = group_df.head(10).copy().iloc[::-1]
+        y_pos = np.arange(len(plot_group_df))
+        axes[1, 0].barh(y_pos, plot_group_df["tp_f1"], color="#E45756", alpha=0.85, label="TP F1")
+        axes[1, 0].scatter(plot_group_df["tp_recall"], y_pos, color="#4C78A8", s=60, label="TP Recall", zorder=3)
+        axes[1, 0].set_yticks(y_pos)
+        axes[1, 0].set_yticklabels(plot_group_df["group"])
+        axes[1, 0].set_xlim(0, 1.02)
+        axes[1, 0].set_title("Worst-case Combo Performance (CV OOF)")
+        axes[1, 0].legend(loc="lower right", fontsize=9)
+        for y_idx, (_, row) in enumerate(plot_group_df.iterrows()):
+            axes[1, 0].text(min(1.0, float(row["tp_f1"]) + 0.02), y_idx, f"n={int(row['n'])}", va="center", fontsize=8, color="#374151")
+    else:
+        axes[1, 0].text(0.5, 0.5, "No combo groups available", ha="center", va="center", transform=axes[1, 0].transAxes)
+        axes[1, 0].set_title("Worst-case Combo Performance (CV OOF)")
+
+    nn_vals = pd.to_numeric(oof_df.get("local_nn_dist"), errors="coerce").dropna().to_numpy(dtype=float)
+    if len(nn_vals):
+        axes[1, 1].hist(nn_vals, bins=20, color="#72B7B2", alpha=0.85, edgecolor="white")
+        q75 = float(np.nanpercentile(nn_vals, 75))
+        mean_nn = float(np.nanmean(nn_vals))
+        axes[1, 1].axvline(q75, color="#E45756", linestyle="--", linewidth=2, label=f"q75={q75:.3f}")
+        axes[1, 1].axvline(mean_nn, color="#4C78A8", linestyle=":", linewidth=2, label=f"mean={mean_nn:.3f}")
+        axes[1, 1].legend(loc="upper right", fontsize=9)
+    axes[1, 1].set_title("Coverage: Local 1-NN Distance")
+    axes[1, 1].set_xlabel("Normalized nearest-neighbor distance")
+    axes[1, 1].set_ylabel("Count")
+    coverage_text = "\n".join([
+        f"occupied_cells: {coverage_summary.get('occupied_cells', 0)}",
+        f"cells_with_1_sample: {coverage_summary.get('cells_with_1_sample', 0)}",
+        f"cells_with_2+_sample: {coverage_summary.get('cells_with_2_or_more', 0)}",
+        f"max_cell_count: {coverage_summary.get('max_cell_count', 0)}",
+        f"median_cell_count: {coverage_summary.get('median_cell_count', 0):.1f}",
+    ])
+    axes[1, 1].text(0.98, 0.95, coverage_text, ha="right", va="top", transform=axes[1, 1].transAxes,
+                     fontsize=9, bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "alpha": 0.9, "edgecolor": "#D1D5DB"})
+
+    fig.suptitle("Iteration Diagnostics: Boundary, Worst-case Group, Coverage", fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_png, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return True, segment_df, group_df, bin_df
 
 
 def collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=None):
@@ -675,7 +972,7 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png, source_label="H
     return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
 
 
-def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir):
+def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir, source_label="Holdout", output_name="extra_outputs_actual_vs_pred_holdout.png"):
     """Save actual vs predicted plots for extra regression outputs.
     
     Args:
@@ -683,6 +980,8 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         y_extra_pred: 2D array (n_samples, n_extra) of predicted values
         extra_cols: list of column names
         output_dir: Path to save plots
+        source_label: label shown in plot title
+        output_name: filename for combined plot
     
     Returns:
         dict: metrics for each extra output
@@ -755,9 +1054,9 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
             ax.set_title(f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.4f}" if abs(rmse_val) < 10 else f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.2f}", fontsize=12, fontweight="bold")
             ax.grid(True, alpha=0.3)
         
-        fig.suptitle("Extra Outputs: Actual vs Predicted (Holdout, NoTP only)", fontsize=14, fontweight="bold", y=1.02)
+        fig.suptitle(f"Extra Outputs: Actual vs Predicted ({source_label}, NoTP only)", fontsize=14, fontweight="bold", y=1.02)
         fig.tight_layout()
-        combined_png = output_dir / "extra_outputs_actual_vs_pred_holdout.png"
+        combined_png = output_dir / output_name
         fig.savefig(combined_png, dpi=180, bbox_inches="tight")
         plt.close(fig)
         print(f"[INFO] Saved combined extra outputs plot: {combined_png}")
@@ -1499,15 +1798,27 @@ def build_bucket_bin_quota_rules(df, cfg, bucket_target_counts):
             print(json.dumps(q_notp["quota_by_label"], indent=2, ensure_ascii=False))
     return rules
 
-def compute_cv_oof_predictions(x_train, y_class, y_tmax, config, gp_params=None, tmax_params=None):
+def compute_cv_oof_predictions(
+    x_train,
+    y_class,
+    y_tmax,
+    config,
+    gp_params=None,
+    tmax_params=None,
+    y_extra=None,
+    extra_cols=None,
+    selected_kind="gp",
+    selection_report=None,
+    mlp_params=None,
+):
     """Compute out-of-fold (OOF) CV predictions for classifier and Tmax.
 
-    Returns per-sample OOF class predictions and OOF Tmax predictions (NoTP only),
-    enabling CV-based confusion matrix and actual-vs-predicted plots when holdout
+    Returns per-sample OOF predictions for classification, Tmax, and optional
+    extra regression outputs, enabling CV-based fallback plots when holdout
     evaluation is disabled.
     """
     from sklearn.model_selection import StratifiedKFold
-    from models_gp import fit_gpc_passfail, fit_gpr_tmax_given_pass
+    from acquisition import predict_outputs
 
     y = np.asarray(y_class)
     unique, counts = np.unique(y, return_counts=True)
@@ -1522,22 +1833,44 @@ def compute_cv_oof_predictions(x_train, y_class, y_tmax, config, gp_params=None,
     cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=seed)
     oof_class = np.full(len(y), -1, dtype=int)
     oof_tmax = np.full(len(y), np.nan, dtype=float)
+    oof_extra = None
+    extra_cols = list(extra_cols or [])
+    if y_extra is not None and extra_cols:
+        oof_extra = np.full((len(y), len(extra_cols)), np.nan, dtype=float)
+
+    tuned_params = {
+        "gp_params": gp_params,
+        "tmax_params": tmax_params,
+        "mlp_params": mlp_params,
+    }
 
     for fold, (tr, va) in enumerate(cv.split(x_train, y)):
-        clf = fit_gpc_passfail(x_train[tr], y[tr], random_state=seed + fold, params=gp_params, use_ard=use_ard)
-        oof_class[va] = clf.predict(x_train[va])
-        if y_tmax is not None:
-            reg, has = fit_gpr_tmax_given_pass(
-                x_train[tr], y_tmax[tr], y[tr],
-                pass_label=pass_label, min_pass_samples=4,
-                random_state=seed + fold, params=tmax_params, use_ard=use_ard,
-            )
-            if has:
-                pass_mask_va = (y[va] == pass_label)
-                if pass_mask_va.any():
-                    oof_tmax[va[pass_mask_va]] = reg.predict(x_train[va][pass_mask_va])
+        model = fit_selected_model_for_oof(
+            selected_kind,
+            selection_report or {},
+            tuned_params,
+            x_train[tr],
+            y[tr],
+            None if y_tmax is None else np.asarray(y_tmax)[tr],
+            None if y_extra is None else np.asarray(y_extra)[tr],
+            config,
+            extra_cols,
+            seed + fold,
+        )
+        pred = predict_outputs(model, x_train[va])
+        oof_class[va] = (np.asarray(pred["p_tp"], dtype=float) >= 0.5).astype(int)
+        if y_tmax is not None and "tmax_pred" in pred:
+            pass_mask_va = (y[va] == pass_label)
+            if pass_mask_va.any():
+                oof_tmax[va[pass_mask_va]] = np.asarray(pred["tmax_pred"], dtype=float)[pass_mask_va]
+        if oof_extra is not None and "extra_pred" in pred:
+            pass_mask_va = (y[va] == pass_label)
+            if pass_mask_va.any():
+                extra_pred = np.asarray(pred["extra_pred"], dtype=float)
+                if extra_pred.ndim == 2 and extra_pred.shape[1] == len(extra_cols):
+                    oof_extra[va[pass_mask_va], :] = extra_pred[pass_mask_va, :]
 
-    return {"oof_class": oof_class, "oof_tmax": oof_tmax, "cv_splits": splits}
+    return {"oof_class": oof_class, "oof_tmax": oof_tmax, "oof_extra": oof_extra, "cv_splits": splits}
 
 
 def extract_cv_performance(selection_report, selected_model):
@@ -1601,6 +1934,11 @@ def main():
 
     df = load_labeled_data(config.INPUT_CSV)
     df = add_interaction_terms(df, getattr(config, "INTERACTION_TERMS", []))
+    unlabeled_mask = df[config.TPNoTP_COL].isna()
+    if unlabeled_mask.any():
+        dropped = int(unlabeled_mask.sum())
+        df = df.loc[~unlabeled_mask].copy().reset_index(drop=True)
+        print(f"[INFO] Dropped {dropped} unlabeled rows from {config.INPUT_CSV} before model fitting.")
     validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
     validate_passfail_labels(df, config.TPNoTP_COL, config.PASS_LABEL, config.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(config.DISCRETE_LEVELS, config.DISCRETE_COLS, config.S_PREFIX)
@@ -1641,6 +1979,21 @@ def main():
     
     print("[INFO] Model selection report:"); print(json.dumps(selection_report, indent=2, ensure_ascii=False))
     print(f"[INFO] Selected model kind: {getattr(selected_model, 'kind', 'gp')}")
+
+    # Keep a stable latest bundle path for downstream predictors/UI.
+    latest_bundle_path = config.OUTPUT_DIR / "latest_surrogate_bundle.pkl"
+    latest_bundle_meta_path = config.OUTPUT_DIR / "latest_surrogate_bundle_meta.json"
+    bundle_metadata = {
+        "selected_model": str(getattr(selected_model, "kind", "unknown")),
+        "input_csv": str(getattr(config, "INPUT_CSV", "")),
+        "try_dir": str(try_dir),
+    }
+    save_surrogate_bundle(latest_bundle_path, pre, selected_model, config, metadata=bundle_metadata)
+    bundle_loaded = load_surrogate_bundle(latest_bundle_path)
+    save_bundle_metadata(latest_bundle_meta_path, latest_bundle_path, bundle_loaded)
+    print(f"[INFO] Saved latest surrogate bundle: {latest_bundle_path}")
+    print(f"[INFO] Saved latest surrogate metadata: {latest_bundle_meta_path}")
+
     pool = generate_candidate_pool(valid_combos, config.BASE_CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS, config.DISCRETE_COLS, config.CANDIDATES_PER_COMBO, config.EXCLUDED_REFERENCE_RANGES, config.RANDOM_SEED)
     # Filter out candidates too close to existing labeled data (prevents duplicate sampling)
     pool = filter_near_existing_data(pool, df, config.BASE_CONTINUOUS_COLS, config.DISCRETE_COLS, min_distance=0.05)
@@ -1796,6 +2149,13 @@ def main():
     # === Holdout Performance Evaluation ===
     performance_dir = try_dir / "Performance"
     performance_dir.mkdir(parents=True, exist_ok=True)
+    cv_diag_png = performance_dir / "cv_boundary_combo_coverage_dashboard.png"
+    cv_diag_oof_csv = performance_dir / "cv_oof_diagnostics.csv"
+    cv_diag_segments_csv = performance_dir / "cv_boundary_segment_metrics.csv"
+    cv_diag_groups_csv = performance_dir / "cv_combo_group_metrics.csv"
+    cv_diag_bins_csv = performance_dir / "cv_probability_bin_metrics.csv"
+    cv_cm_png = performance_dir / "tp_notp_cv_confusion_matrix.png"
+    cv_tmax_png = performance_dir / "tmax_actual_vs_pred_cv.png"
     holdout_cm_png = performance_dir / "tp_notp_holdout_confusion_matrix.png"
     holdout_tmax_png = performance_dir / "tmax_actual_vs_pred_holdout.png"
 
@@ -1805,6 +2165,47 @@ def main():
     tmax_metrics = None
     y_holdout_class = None
     y_holdout_pred_class = None
+
+    try:
+        coverage_df, coverage_summary = compute_coverage_diagnostics(df, config.BASE_CONTINUOUS_COLS, config.CONTINUOUS_BOUNDS)
+        oof_diag_df = build_cv_oof_diagnostics(
+            coverage_df,
+            x_train,
+            y_class,
+            y_tmax,
+            y_extra,
+            config,
+            tuned,
+            getattr(selected_model, "kind", "gp"),
+            selection_report,
+            extra_cols=extra_cols,
+        )
+        wrote_diag, boundary_seg_df, combo_group_df, prob_bin_df = save_cv_diagnostics_dashboard(oof_diag_df, coverage_summary, cv_diag_png, config)
+        if len(oof_diag_df):
+            cols_front = [
+                config.TPNoTP_COL,
+                "actual_label",
+                "oof_predicted_label",
+                "oof_is_error",
+                "oof_p_tp",
+                "oof_p_notp",
+                "is_boundary_band",
+                "ptp_distance_from_boundary",
+                "local_nn_dist",
+                "coverage_cell_key",
+            ] + [c for c in config.BASE_CONTINUOUS_COLS + config.DISCRETE_COLS + ["discrete_combo_id"] if c in oof_diag_df.columns]
+            cols_rest = [c for c in oof_diag_df.columns if c not in cols_front]
+            oof_diag_df[cols_front + cols_rest].to_csv(cv_diag_oof_csv, index=False, encoding="utf-8-sig")
+        if len(boundary_seg_df):
+            boundary_seg_df.to_csv(cv_diag_segments_csv, index=False, encoding="utf-8-sig")
+        if len(combo_group_df):
+            combo_group_df.to_csv(cv_diag_groups_csv, index=False, encoding="utf-8-sig")
+        if len(prob_bin_df):
+            prob_bin_df.to_csv(cv_diag_bins_csv, index=False, encoding="utf-8-sig")
+        if wrote_diag:
+            print(f"[INFO] Saved CV diagnostics dashboard: {cv_diag_png}")
+    except Exception as e:
+        print(f"[WARN] CV diagnostics dashboard generation failed: {e}")
 
     if not enable_holdout_eval:
         print("[INFO] ENABLE_HOLDOUT_EVAL=False. Skipping holdout evaluation for this run.")
@@ -1930,44 +2331,64 @@ def main():
     else:
         print(f"[WARN] FINAL_TEST_CSV not set or file not found. Skipping holdout evaluation.")
 
-    # === CV-based performance plots (fallback when holdout is unavailable) ===
-    # Generate the same confusion-matrix / Tmax actual-vs-pred figures from
-    # out-of-fold CV predictions so the Performance folder is populated.
+    # === CV-based performance plots (always save) ===
+    # Always generate the same confusion-matrix / Tmax actual-vs-pred figures
+    # from out-of-fold CV predictions. When holdout is unavailable, these CV
+    # metrics are also used as fallback for summary/trend fields.
     holdout_ran = cm_metrics is not None
     oof_cv_splits = None
-    if not holdout_ran:
-        try:
-            oof = compute_cv_oof_predictions(
-                x_train, y_class, y_tmax, config,
-                gp_params=tuned.get("gp_params"),
-                tmax_params=tuned.get("tmax_params"),
-            )
-        except Exception as e:
-            oof = None
-            print(f"[WARN] CV OOF computation failed: {e}")
-        if oof is not None:
-            oof_cv_splits = oof.get("cv_splits")
-            valid = oof["oof_class"] >= 0
-            if valid.any():
-                y_cv_true = np.asarray(y_class)[valid]
-                y_cv_pred = oof["oof_class"][valid]
-                cv_cm_png = performance_dir / "tp_notp_cv_confusion_matrix.png"
-                cm_metrics = save_holdout_confusion_matrix(y_cv_true, y_cv_pred, cv_cm_png, config, source_label="CV (OOF)")
+    try:
+        oof = compute_cv_oof_predictions(
+            x_train, y_class, y_tmax, config,
+            gp_params=tuned.get("gp_params"),
+            tmax_params=tuned.get("tmax_params"),
+            y_extra=y_extra,
+            extra_cols=extra_cols,
+            selected_kind=getattr(selected_model, "kind", "gp"),
+            selection_report=selection_report,
+            mlp_params=tuned.get("mlp_params"),
+        )
+    except Exception as e:
+        oof = None
+        print(f"[WARN] CV OOF computation failed: {e}")
+    if oof is not None:
+        oof_cv_splits = oof.get("cv_splits")
+        valid = oof["oof_class"] >= 0
+        if valid.any():
+            y_cv_true = np.asarray(y_class)[valid]
+            y_cv_pred = oof["oof_class"][valid]
+            cv_cm_metrics = save_holdout_confusion_matrix(y_cv_true, y_cv_pred, cv_cm_png, config, source_label="CV (OOF)")
+            print(f"[INFO] Saved CV confusion matrix: {cv_cm_png} | metrics: {cv_cm_metrics}")
+            if not holdout_ran and cm_metrics is None:
+                cm_metrics = cv_cm_metrics
                 # Expose OOF arrays so the confusion-count block below can fill counts.
                 y_holdout_class = y_cv_true
                 y_holdout_pred_class = y_cv_pred
-                print(f"[INFO] Saved CV confusion matrix: {cv_cm_png} | metrics: {cm_metrics}")
 
-            notp_mask_cv = (np.asarray(y_class) == config.PASS_LABEL) & np.isfinite(oof["oof_tmax"])
-            if notp_mask_cv.any():
-                cv_tmax_png = performance_dir / "tmax_actual_vs_pred_cv.png"
-                tmax_metrics = save_holdout_tmax_actual_vs_pred(
-                    np.asarray(y_tmax)[notp_mask_cv],
-                    oof["oof_tmax"][notp_mask_cv],
-                    cv_tmax_png,
+        notp_mask_cv = (np.asarray(y_class) == config.PASS_LABEL) & np.isfinite(oof["oof_tmax"])
+        if notp_mask_cv.any():
+            cv_tmax_metrics = save_holdout_tmax_actual_vs_pred(
+                np.asarray(y_tmax)[notp_mask_cv],
+                oof["oof_tmax"][notp_mask_cv],
+                cv_tmax_png,
+                source_label="CV (OOF)",
+            )
+            print(f"[INFO] Saved CV Tmax actual-vs-pred plot: {cv_tmax_png} | metrics: {cv_tmax_metrics}")
+            if not holdout_ran and tmax_metrics is None:
+                tmax_metrics = cv_tmax_metrics
+
+            if y_extra is not None and extra_cols and oof.get("oof_extra") is not None:
+                y_extra_cv_notp = np.asarray(y_extra)[notp_mask_cv]
+                y_extra_pred_cv_notp = np.asarray(oof["oof_extra"])[notp_mask_cv]
+                extra_metrics = save_holdout_extra_outputs_plots(
+                    y_extra_cv_notp,
+                    y_extra_pred_cv_notp,
+                    extra_cols,
+                    performance_dir,
                     source_label="CV (OOF)",
+                    output_name="extra_outputs_actual_vs_pred_cv.png",
                 )
-                print(f"[INFO] Saved CV Tmax actual-vs-pred plot: {cv_tmax_png} | metrics: {tmax_metrics}")
+                print(f"[INFO] Extra outputs CV metrics: {extra_metrics}")
 
     # === Save iteration summary for cumulative tracking ===
     bucket_counts_actual = selected["selected_bucket"].value_counts().to_dict() if "selected_bucket" in selected.columns else {}
