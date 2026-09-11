@@ -32,6 +32,12 @@ if (-not (Test-Path $bundlePath)) {
     throw "Embedded bundle not found: $bundlePath"
 }
 
+$bundleMap = @{
+    "LFP_Gen2B" = $bundlePath
+    "LFP_Gen2A" = (Join-Path (Split-Path $projectRoot -Parent) "active_sampling_gp_mlp_optuna_v3_LFP_Gen2A\outputs\latest_surrogate_bundle.pkl")
+    "MidNi_Gen1" = (Join-Path (Split-Path $projectRoot -Parent) "active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\outputs\latest_surrogate_bundle.pkl")
+}
+
 & $pythonExe -m pip install --upgrade pip pyinstaller
 
 try {
@@ -41,6 +47,7 @@ $pyiArgs = @(
     "--clean",
     "--name", "SurrogatePredictor",
     "--collect-all", "streamlit",
+    "--copy-metadata", "streamlit",
     "--exclude-module", "tensorflow",
     "--exclude-module", "tensorboard",
     "--exclude-module", "jax",
@@ -48,9 +55,21 @@ $pyiArgs = @(
     "--hidden-import", "streamlit_surrogate_app",
     "--hidden-import", "surrogate_bundle",
     "--hidden-import", "config",
+    "--add-data", "outputs;outputs",
     "--add-data", "outputs/latest_surrogate_bundle.pkl;embedded_bundle",
     "launcher_streamlit.py"
 )
+
+foreach ($tag in $bundleMap.Keys) {
+    $src = $bundleMap[$tag]
+    if (Test-Path $src) {
+        $pyiArgs += @("--add-data", "$src;embedded_bundle/$tag")
+        Write-Host "[INFO] Embedded bundle added: $tag"
+    }
+    else {
+        Write-Host "[WARN] Bundle not found for $tag : $src"
+    }
+}
 
 $projectHiddenImports = @(
     "acquisition",

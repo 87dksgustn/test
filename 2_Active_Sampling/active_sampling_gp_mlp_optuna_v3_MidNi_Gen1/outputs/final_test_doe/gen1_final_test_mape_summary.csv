@@ -1,0 +1,8 @@
+﻿target,pred_col,n,mape_percent
+MaxT_TB_Center,tmax_pred,35,0.5511877558468511
+MaxT_TB_Top,MaxT_TB_Top_pred,35,0.6601212512997713
+MaxT_TB_Btm,MaxT_TB_Btm_pred,35,0.6722561483160355
+MaxT_Adj_Y,MaxT_Adj_Y_pred,35,56.43454193567665
+MaxT_Adj_Z,MaxT_Adj_Z_pred,35,0.9595748583611721
+Max_Power,Max_Power_pred,35,1.0438099591871157
+Time_MaxT,Time_MaxT_pred,35,0.83196457471492

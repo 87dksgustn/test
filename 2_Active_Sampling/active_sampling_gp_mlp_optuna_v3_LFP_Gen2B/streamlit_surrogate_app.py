@@ -20,28 +20,94 @@ from surrogate_bundle import get_bundle_info, load_surrogate_bundle, predict_wit
 
 ADMIN_PASSWORD = "Q!w2p0o9"
 CHEMISTRY_OPTIONS = ["LFP Gen2B", "LFP Gen2A", "HV Mid-Ni Gen1"]
-INPUT_COLUMN_ORDER = [
-    "A_Cell_D",
-    "predicted_at",
-    "B_Barrier_Type",
-    "C_Barrier_Thx",
-    "D_Barrier_Outer_Type",
-    "E_Barrier_Outer_Thx",
-    "F_ThermalResin_Thx",
-    "G_CoolantLPM",
-]
+CHEMISTRY_BUNDLE_TAG = {
+    "LFP Gen2B": "LFP_Gen2B",
+    "LFP Gen2A": "LFP_Gen2A",
+    "HV Mid-Ni Gen1": "MidNi_Gen1",
+}
+CONFIDENCE_Z = {90: 1.645, 95: 1.960, 99: 2.576}
+PTP_BOOTSTRAP_SAMPLES = 1500
+PTP_BOOTSTRAP_N = 200
+TOLERANCE_SAMPLES = 5000
+TOLERANCE_LHS_SEED = 20260911
+
+# Display-only placeholders for variables that are not part of a chemistry's
+# surrogate schema yet. They are shown disabled and never sent to the model.
+CHEMISTRY_PLACEHOLDER_INPUTS = {
+    "HV Mid-Ni Gen1": {
+        "D_Barrier_Outer_Type": "Si",
+        "E_Barrier_Outer_Thx": 2.82,
+    },
+}
+
 ADMIN_ONLY_RESULT_COLUMNS = {
     "predict_mode",
+    "combo_id",
+    "trial_number",
     "p_tp",
     "p_notp",
-    "tmax_std",
     "clf_uncertainty",
     "MaxT_Adj_Y_pred",
-    "MaxT_Adj_Y_std",
     "MaxT_Adj_Z_pred",
-    "MaxT_Adj_Z_std",
-    "Max_Power_std",
 }
+
+
+def is_admin_only_column(col: str) -> bool:
+    name = str(col)
+    lower = name.lower()
+    if name in ADMIN_ONLY_RESULT_COLUMNS:
+        return True
+    if lower.startswith("maxt_adj_y") or lower.startswith("maxt_adj_z"):
+        return True
+    if name.endswith("_std"):
+        return True
+    if name.startswith("p_"):
+        return True
+    if "uncertainty" in lower:
+        return True
+    if name.startswith("optuna_value_"):
+        return True
+    return False
+
+
+def bundle_schema(bundle) -> dict:
+    cfg = bundle.get("config", {}) if isinstance(bundle, dict) else {}
+    return {
+        "base_continuous_cols": list(cfg.get("base_continuous_cols", [])),
+        "discrete_cols": list(cfg.get("discrete_cols", [])),
+        "continuous_bounds": dict(cfg.get("continuous_bounds", {})),
+        "discrete_levels": dict(cfg.get("discrete_levels", {})),
+        "other_regression_cols": list(cfg.get("other_regression_cols", [])),
+        "time_feature_cols": list(cfg.get("time_feature_cols", [])),
+    }
+
+
+def schema_input_columns(bundle, chemistry: str) -> list[str]:
+    schema = bundle_schema(bundle)
+    cols = list(schema["base_continuous_cols"]) + list(schema["discrete_cols"])
+    cols.extend(CHEMISTRY_PLACEHOLDER_INPUTS.get(chemistry, {}).keys())
+
+    deduped = []
+    seen = set()
+    for col in cols:
+        if col in seen:
+            continue
+        seen.add(col)
+        deduped.append(col)
+    return sorted(deduped)
+
+
+def active_input_order() -> list[str]:
+    order = st.session_state.get("active_input_order") if st is not None else None
+    return list(order) if order else []
+
+
+def active_chemistry() -> str:
+    if st is None:
+        return ""
+    return str(st.session_state.get("active_chemistry", ""))
+
+
 DEFAULT_OPT_TRIALS_PER_COMBO = 60
 DEFAULT_OPT_TOP_N = 10
 DEFAULT_OPT_PTP_UPPER = 0.50
@@ -65,25 +131,146 @@ def embedded_bundle_path() -> Path:
     return data_root() / "embedded_bundle" / "latest_surrogate_bundle.pkl"
 
 
-def chemistry_bundle_candidates(chemistry: str):
-    root = runtime_root()
-    cwd = Path.cwd()
+def embedded_bundle_paths_for_chemistry(chemistry: str) -> list[Path]:
+    tag = CHEMISTRY_BUNDLE_TAG.get(chemistry, chemistry.replace(" ", "_"))
+    return [
+        # Preferred packaged layout: one folder per chemistry under embedded_bundle.
+        data_root() / "embedded_bundle" / tag / "latest_surrogate_bundle.pkl",
+        runtime_root() / "embedded_bundle" / tag / "latest_surrogate_bundle.pkl",
+        # Legacy layout fallback: chemistry tag encoded in file name.
+        data_root() / "embedded_bundle" / f"latest_surrogate_bundle_{tag}.pkl",
+        runtime_root() / "embedded_bundle" / f"latest_surrogate_bundle_{tag}.pkl",
+        # Accidental prior layout fallback (destination treated as directory).
+        data_root() / "embedded_bundle" / f"latest_surrogate_bundle_{tag}.pkl" / "latest_surrogate_bundle.pkl",
+        runtime_root() / "embedded_bundle" / f"latest_surrogate_bundle_{tag}.pkl" / "latest_surrogate_bundle.pkl",
+        data_root() / "embedded_bundle" / "latest_surrogate_bundle.pkl",
+        runtime_root() / "embedded_bundle" / "latest_surrogate_bundle.pkl",
+    ]
+
+
+def bundle_search_roots() -> list[Path]:
+    roots = []
+    for base in [runtime_root(), data_root(), Path.cwd()]:
+        roots.extend([
+            base,
+            base / "outputs",
+            base / "bundles",
+            base / "embedded_bundle",
+        ])
+        # Sibling project folders (one per chemistry) next to this app.
+        parent = base.parent
+        if parent != base:
+            roots.append(parent)
+            try:
+                roots.extend(sorted(p for p in parent.iterdir() if p.is_dir()))
+            except Exception:
+                pass
+    roots.append(Path.home() / "SurrogatePredictor" / "outputs")
+
+    deduped = []
+    seen = set()
+    for candidate in roots:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(resolved)
+    return deduped
+
+
+def chemistry_bundle_aliases(chemistry: str) -> list[str]:
     mapping = {
         "LFP Gen2B": [
-            embedded_bundle_path(),
-            cwd / "outputs" / "latest_surrogate_bundle.pkl",
-            root / "outputs" / "latest_surrogate_bundle.pkl",
+            "LFP Gen2B",
+            "LFP_Gen2B",
+            "lfp_gen2b",
+            "gen2b",
         ],
         "LFP Gen2A": [
-            cwd.parent / "active_sampling_gp_mlp_optuna_v3_LFP_Gen2A" / "outputs" / "latest_surrogate_bundle.pkl",
-            root.parent / "active_sampling_gp_mlp_optuna_v3_LFP_Gen2A" / "outputs" / "latest_surrogate_bundle.pkl",
+            "LFP Gen2A",
+            "LFP_Gen2A",
+            "lfp_gen2a",
+            "gen2a",
         ],
         "HV Mid-Ni Gen1": [
-            cwd.parent / "active_sampling_gp_mlp_optuna_v3_MidNi_Gen1" / "outputs" / "latest_surrogate_bundle.pkl",
-            root.parent / "active_sampling_gp_mlp_optuna_v3_MidNi_Gen1" / "outputs" / "latest_surrogate_bundle.pkl",
+            "HV Mid-Ni Gen1",
+            "HV_MidNi_Gen1",
+            "MidNi_Gen1",
+            "hv_midni_gen1",
+            "midni_gen1",
         ],
     }
-    return [Path(p).resolve() for p in mapping.get(chemistry, [])]
+    aliases = mapping.get(chemistry, [chemistry])
+    cleaned = []
+    seen = set()
+    for alias in aliases:
+        normalized = alias.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    if not cleaned:
+        cleaned = [chemistry]
+    return cleaned
+
+
+def _root_matches_alias(root: Path, aliases: list[str]) -> bool:
+    name = root.name.lower().replace(" ", "_").replace("-", "")
+    for alias in aliases:
+        token = alias.lower().replace(" ", "_").replace("-", "")
+        if token and token in name:
+            return True
+    return False
+
+
+def chemistry_bundle_candidates(chemistry: str):
+    aliases = chemistry_bundle_aliases(chemistry)
+    other_aliases = []
+    for other in CHEMISTRY_OPTIONS:
+        if other != chemistry:
+            other_aliases.extend(chemistry_bundle_aliases(other))
+
+    named = []
+    generic = []
+
+    # Highest priority in packaged runtime: chemistry-specific embedded bundle.
+    named.extend(embedded_bundle_paths_for_chemistry(chemistry))
+
+    for root in bundle_search_roots():
+        # A root belonging to a different chemistry must never be used.
+        if _root_matches_alias(root, other_aliases) and not _root_matches_alias(root, aliases):
+            continue
+
+        for alias in aliases:
+            named.extend([
+                root / "outputs" / alias / "latest_surrogate_bundle.pkl",
+                root / alias / "latest_surrogate_bundle.pkl",
+                root / "embedded_bundle" / alias.replace(" ", "_") / "latest_surrogate_bundle.pkl",
+                root / "embedded_bundle" / f"latest_surrogate_bundle_{alias.replace(' ', '_')}.pkl",
+                root / "embedded_bundle" / f"latest_surrogate_bundle_{alias.replace(' ', '_')}.pkl" / "latest_surrogate_bundle.pkl",
+                root / f"{alias}.pkl",
+            ])
+
+        if _root_matches_alias(root, aliases):
+            named.extend([
+                root / "outputs" / "latest_surrogate_bundle.pkl",
+                root / "latest_surrogate_bundle.pkl",
+            ])
+        else:
+            generic.extend([
+                root / "outputs" / "latest_surrogate_bundle.pkl",
+                root / "embedded_bundle" / "latest_surrogate_bundle.pkl",
+            ])
+
+    seen = set()
+    ordered = []
+    for candidate in named + generic:
+        resolved = str(candidate.resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered.append(Path(resolved))
+    return ordered
 
 
 def default_bundle_for_chemistry(chemistry: str) -> Path:
@@ -93,31 +280,206 @@ def default_bundle_for_chemistry(chemistry: str) -> Path:
             return candidate
     if candidates:
         return candidates[0]
-    return Path(getattr(config, "OUTPUT_DIR", Path("outputs"))) / "latest_surrogate_bundle.pkl"
+    preferred = runtime_root() / "outputs" / chemistry_bundle_aliases(chemistry)[0] / "latest_surrogate_bundle.pkl"
+    return preferred
 
 
 def is_admin_mode() -> bool:
     return bool(st.session_state.get("is_admin", False))
 
 
+def active_confidence_level() -> int:
+    if st is None:
+        return 95
+    return int(st.session_state.get("confidence_level", 95))
+
+
+def active_show_band() -> bool:
+    if st is None:
+        return True
+    return bool(st.session_state.get("show_confidence_band", True))
+
+
+def bootstrap_interval_for_ptp(values: pd.Series, level: int, n_size: int = PTP_BOOTSTRAP_N, n_boot: int = PTP_BOOTSTRAP_SAMPLES):
+    alpha = (100.0 - float(level)) / 100.0
+    lo_q = alpha / 2.0
+    hi_q = 1.0 - lo_q
+    rng = np.random.default_rng(20260910)
+
+    lows = []
+    highs = []
+    for raw in values:
+        p = pd.to_numeric(raw, errors="coerce")
+        if pd.isna(p):
+            lows.append(np.nan)
+            highs.append(np.nan)
+            continue
+        p = min(1.0, max(0.0, float(p)))
+        draws = rng.binomial(n=int(n_size), p=p, size=int(n_boot)) / float(n_size)
+        lows.append(float(np.quantile(draws, lo_q)))
+        highs.append(float(np.quantile(draws, hi_q)))
+    return pd.Series(lows, index=values.index), pd.Series(highs, index=values.index)
+
+
+def add_confidence_band_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if not active_show_band() or len(df) == 0:
+        return df
+
+    level = active_confidence_level()
+    z = float(CONFIDENCE_Z.get(level, 1.960))
+    out = df.copy()
+
+    if "p_tp" in out.columns:
+        lo_col = f"p_tp_ci{level}_lo"
+        hi_col = f"p_tp_ci{level}_hi"
+        band_col = f"p_tp_ci{level}_band"
+        if lo_col not in out.columns or hi_col not in out.columns:
+            lo_s, hi_s = bootstrap_interval_for_ptp(out["p_tp"], level=level)
+            out[lo_col] = lo_s
+            out[hi_col] = hi_s
+        if band_col not in out.columns:
+            out[band_col] = [
+                "" if (pd.isna(lo) or pd.isna(hi)) else f"{float(lo):.2f}~{float(hi):.2f}"
+                for lo, hi in zip(out[lo_col], out[hi_col])
+            ]
+
+    std_cols = [col for col in out.columns if str(col).endswith("_std")]
+    for std_col in std_cols:
+        base = str(std_col)[: -len("_std")]
+        pred_candidates = [f"{base}_pred", base]
+        pred_col = next((c for c in pred_candidates if c in out.columns), None)
+        if pred_col is None:
+            continue
+
+        band_col = f"{base}_ci{level}_band"
+        if band_col in out.columns:
+            continue
+
+        pred_num = pd.to_numeric(out[pred_col], errors="coerce")
+        std_num = pd.to_numeric(out[std_col], errors="coerce")
+        lower = pred_num - (z * std_num)
+        upper = pred_num + (z * std_num)
+        out[band_col] = [
+            "" if (pd.isna(lo) or pd.isna(hi)) else f"{float(lo):.2f}~{float(hi):.2f}"
+            for lo, hi in zip(lower, upper)
+        ]
+
+        # MidNi user view requires both labels: Time_Max_Power and Time_Tmax.
+        if active_chemistry() == "HV Mid-Ni Gen1" and base == "Time_MaxT":
+            out[f"Time_Tmax_ci{level}_band"] = out[band_col]
+
+    return out
+
+
 def prediction_view_df(df: pd.DataFrame, admin_mode: bool) -> pd.DataFrame:
-    ordered = [col for col in INPUT_COLUMN_ORDER if col in df.columns]
+    collapsed_mode = "__range_collapsed__" in df.columns and bool(df["__range_collapsed__"].astype(bool).any())
+    if not collapsed_mode:
+        df = add_confidence_band_columns(df)
+
+    if "__range_collapsed__" in df.columns:
+        df = df.drop(columns=["__range_collapsed__"], errors="ignore")
+
+    level = active_confidence_level()
+    ptp_lo_col = f"p_tp_ci{level}_lo"
+    ptp_hi_col = f"p_tp_ci{level}_hi"
+
+    tol_lo_col = "__p_tp_tol_lo"
+    tol_hi_col = "__p_tp_tol_hi"
+    if "predicted_label" in df.columns and collapsed_mode and tol_lo_col in df.columns and tol_hi_col in df.columns:
+        def _label_with_tol_band(label, lo, hi):
+            if pd.isna(lo) or pd.isna(hi):
+                return label
+            if float(lo) <= 0.5 <= float(hi):
+                return f"{label}<br>(TP확률 : {float(lo):.2f}~{float(hi):.2f})"
+            return label
+
+        df = df.copy()
+        df["predicted_label"] = [
+            _label_with_tol_band(label, lo, hi)
+            for label, lo, hi in zip(df["predicted_label"], df[tol_lo_col], df[tol_hi_col])
+        ]
+
+    if "predicted_label" in df.columns and ptp_lo_col in df.columns and ptp_hi_col in df.columns:
+        def _label_with_ptp_band(label, lo, hi):
+            if pd.isna(lo) or pd.isna(hi):
+                return label
+            if float(lo) <= 0.5 <= float(hi):
+                return f"{label}<br>(TP확률 : {float(lo):.2f}~{float(hi):.2f})"
+            return label
+
+        df = df.copy()
+        df["predicted_label"] = [
+            _label_with_ptp_band(label, lo, hi)
+            for label, lo, hi in zip(df["predicted_label"], df[ptp_lo_col], df[ptp_hi_col])
+        ]
+
+    if tol_lo_col in df.columns or tol_hi_col in df.columns:
+        df = df.drop(columns=[tol_lo_col, tol_hi_col], errors="ignore")
+
+    leading = ["predicted_at", "opt_rank", "pareto_rank"]
+    ordered = [col for col in leading if col in df.columns]
+    for col in active_input_order():
+        if col in df.columns and col not in ordered:
+            ordered.append(col)
+
     remaining = [col for col in df.columns if col not in ordered]
     if not admin_mode:
-        remaining = [col for col in remaining if col not in ADMIN_ONLY_RESULT_COLUMNS]
+        remaining = [col for col in remaining if not is_admin_only_column(col)]
+        filtered = []
+        for col in remaining:
+            if (not collapsed_mode) and str(col).endswith("_pred"):
+                base = str(col)[: -len("_pred")]
+                has_band = any(c.startswith(f"{base}_ci") and c.endswith("_band") for c in df.columns)
+                if has_band:
+                    continue
+            filtered.append(col)
+        remaining = filtered
+
     return df.loc[:, ordered + remaining]
+
+
+def display_name_for_output(base_name: str) -> str:
+    if base_name == "tmax":
+        return "Tmax_adj"
+    if base_name == "Time_MaxT":
+        return "Time_Max_Power"
+    return base_name
 
 
 def display_table_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+
+    # Format numeric values before renaming columns to avoid duplicate-name
+    # collisions (e.g., pred and band both mapped to the same display label).
     numeric_cols = out.select_dtypes(include=["number"]).columns
     for col in numeric_cols:
-        out[col] = out[col].map(lambda x: "" if pd.isna(x) else f"{float(x):.2f}")
+        name = str(col)
+        if name in {"opt_rank", "pareto_rank", "trial_number", "combo_id"} or name.endswith("_rank"):
+            out[col] = out[col].map(lambda x: "" if pd.isna(x) else f"{int(float(x))}")
+        else:
+            out[col] = out[col].map(lambda x: "" if pd.isna(x) else f"{float(x):.2f}")
+
+    # Human-friendly headers for table display (schema independent).
+    rename_map = {}
+    for col in out.columns:
+        name = str(col)
+        if name == "predicted_label":
+            rename_map[col] = "TP/No TP"
+        elif "_ci" in name and name.endswith("_band"):
+            head = name[: -len("_band")]
+            ci_pos = head.find("_ci")
+            target = head[:ci_pos]
+            label_target = target[: -len("_pred")] if target.endswith("_pred") else target
+            rename_map[col] = display_name_for_output(label_target)
+        elif name.endswith("_pred"):
+            rename_map[col] = display_name_for_output(name[: -len("_pred")])
+    if rename_map:
+        out = out.rename(columns=rename_map)
     return out
 
 
 def render_centered_table(df: pd.DataFrame):
-    table_html = display_table_df(df).to_html(index=False)
+    table_html = display_table_df(df).to_html(index=False, escape=False)
     st.markdown(
         """
 <style>
@@ -137,15 +499,15 @@ def render_centered_table(df: pd.DataFrame):
     )
 
 
-def show_save_history_button(key: str, button_label: str):
+def show_save_history_button(key: str, button_label: str, chemistry: str):
     pending = pop_pending_history(key)
     if pending is None:
         return
     st.caption(f"Pending history rows: {len(pending)}")
     if st.button(button_label, key=f"save_{key}_btn"):
-        append_history(pending)
+        append_history(pending, chemistry)
         st.session_state.pop(key, None)
-        st.success(f"Saved to history: {history_csv_path()}")
+        st.success(f"Saved to history: {history_csv_path(chemistry)}")
 
 
 def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
@@ -161,14 +523,21 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
     cols_to_mask = [col for col in ["tmax_pred", "tmax_std"] if col in out.columns]
     cols_to_mask.extend(
         col for col in out.columns
-        if col.lower() in {"max_power_pred", "max_power_std"}
+        if col.lower() in {"max_power_pred", "max_power_std", "time_max_power_pred", "time_max_power_std"}
     )
     if cols_to_mask:
         out.loc[tp_mask, cols_to_mask] = pd.NA
     return out
 
 
-def history_csv_path() -> Path:
+def history_file_name(chemistry: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "_" for ch in str(chemistry)).strip("_")
+    if not slug:
+        slug = "default"
+    return f"prediction_history_{slug}.csv"
+
+
+def history_csv_path(chemistry: str) -> Path:
     configured = Path(getattr(config, "OUTPUT_DIR", Path("outputs")))
     candidates = []
 
@@ -181,6 +550,7 @@ def history_csv_path() -> Path:
     # Final fallback for read-only install locations.
     candidates.append((Path.home() / "SurrogatePredictor" / "outputs").resolve())
 
+    file_name = history_file_name(chemistry)
     checked = set()
     for out_dir in candidates:
         out_key = str(out_dir)
@@ -192,16 +562,16 @@ def history_csv_path() -> Path:
             probe = out_dir / ".write_test"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink(missing_ok=True)
-            return out_dir / "prediction_history.csv"
+            return out_dir / file_name
         except Exception:
             continue
 
     # Last-resort path if all checks fail.
-    return (Path.cwd() / "prediction_history.csv").resolve()
+    return (Path.cwd() / file_name).resolve()
 
 
-def append_history(rows_df: pd.DataFrame):
-    p = history_csv_path()
+def append_history(rows_df: pd.DataFrame, chemistry: str):
+    p = history_csv_path(chemistry)
     rows_df = mask_tp_regression_outputs(rows_df)
     if p.exists():
         prev = pd.read_csv(p)
@@ -271,9 +641,8 @@ def sample_optimization_inputs(bundle, chemistry: str, trials_per_combo: int, se
             for col, val in fixed_overrides.items():
                 row[col] = val
 
-            if chemistry == "HV Mid-Ni Gen1":
-                row.setdefault("D_Barrier_Outer_Type", "Si")
-                row.setdefault("E_Barrier_Outer_Thx", 2.82)
+            for col, val in CHEMISTRY_PLACEHOLDER_INPUTS.get(chemistry, {}).items():
+                row.setdefault(col, val)
             rows.append(row)
 
     if not rows:
@@ -323,9 +692,8 @@ def _trial_input_from_bundle(trial, cfg, chemistry: str, fixed_overrides):
     for col, val in fixed_overrides.items():
         row[col] = val
 
-    if chemistry == "HV Mid-Ni Gen1":
-        row.setdefault("D_Barrier_Outer_Type", "Si")
-        row.setdefault("E_Barrier_Outer_Thx", 2.82)
+    for col, val in CHEMISTRY_PLACEHOLDER_INPUTS.get(chemistry, {}).items():
+        row.setdefault(col, val)
 
     return row
 
@@ -507,7 +875,7 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
         st.warning("No feasible candidates found under the current p_tp threshold.")
         render_centered_table(prediction_view_df(out_df.head(20), admin_mode))
         stash_pending_history("pending_opt_history_json", out_df)
-        show_save_history_button("pending_opt_history_json", "Save Last Optimization Result to History")
+        show_save_history_button("pending_opt_history_json", "Save Last Optimization Result to History", chemistry)
         return
 
     sort_cols = [col for col in ["p_tp", "tmax_pred_given_notp", "C_Barrier_Thx"] if col in feasible_df.columns]
@@ -649,18 +1017,18 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
             plt.close(fig)
 
     stash_pending_history("pending_opt_history_json", out_df)
-    show_save_history_button("pending_opt_history_json", "Save Last Optimization Result to History")
+    show_save_history_button("pending_opt_history_json", "Save Last Optimization Result to History", chemistry)
 
 
-def load_history() -> pd.DataFrame:
-    p = history_csv_path()
+def load_history(chemistry: str) -> pd.DataFrame:
+    p = history_csv_path(chemistry)
     if not p.exists():
         return pd.DataFrame()
     return mask_tp_regression_outputs(pd.read_csv(p))
 
 
-def clear_history():
-    p = history_csv_path()
+def clear_history(chemistry: str):
+    p = history_csv_path(chemistry)
     if p.exists():
         p.unlink()
 
@@ -669,6 +1037,12 @@ def default_bundle_path() -> Path:
     embedded = embedded_bundle_path()
     if embedded.exists():
         return embedded
+    runtime_default = runtime_root() / "outputs" / "latest_surrogate_bundle.pkl"
+    if runtime_default.exists():
+        return runtime_default
+    data_default = data_root() / "outputs" / "latest_surrogate_bundle.pkl"
+    if data_default.exists():
+        return data_default
     return Path(getattr(config, "OUTPUT_DIR", Path("outputs"))) / "latest_surrogate_bundle.pkl"
 
 
@@ -703,120 +1077,401 @@ def range_help_text(lo: float, hi: float) -> str:
     return f"Range : [{float(lo):g}, {float(hi):g}]"
 
 
-def number_input_with_hover_range(container, name: str, lo: float, hi: float):
+def number_input_with_hover_range(container, name: str, lo: float, hi: float, key: str | None = None):
     container.markdown(
         f"<span title=\"{range_help_text(lo, hi)}\"><b>{name}</b></span>",
         unsafe_allow_html=True,
     )
+    lo_f = float(lo)
+    hi_f = float(hi)
     return container.number_input(
         f"{name}_input",
-        min_value=float(lo),
-        max_value=float(hi),
-        value=float((lo + hi) / 2),
+        min_value=lo_f,
+        max_value=hi_f,
+        value=float((lo_f + hi_f) / 2),
         step=0.01,
         label_visibility="collapsed",
+        key=key,
     )
 
 
-def selectbox_with_label(container, name: str, options, index: int = 0):
+def selectbox_with_label(container, name: str, options, index: int = 0, key: str | None = None):
     container.markdown(f"<b>{name}</b>", unsafe_allow_html=True)
     return container.selectbox(
         f"{name}_input",
         options=options,
         index=index,
         label_visibility="collapsed",
+        key=key,
     )
 
 
+def disabled_placeholder_input(container, name: str, value, key: str | None = None):
+    container.markdown(
+        f"<span title=\"Not used by the current model\"><b>{name}</b></span>",
+        unsafe_allow_html=True,
+    )
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        container.number_input(
+            f"{name}_input_fixed",
+            value=float(value),
+            step=0.01,
+            disabled=True,
+            label_visibility="collapsed",
+            key=key,
+        )
+    else:
+        container.text_input(
+            f"{name}_input_fixed",
+            value=str(value),
+            disabled=True,
+            label_visibility="collapsed",
+            key=key,
+        )
+
+
+def chunk_into_columns(items: list[str], n_cols: int) -> list[list[str]]:
+    groups: list[list[str]] = [[] for _ in range(n_cols)]
+    if not items:
+        return groups
+    per = -(-len(items) // n_cols)
+    for idx, item in enumerate(items):
+        groups[min(idx // per, n_cols - 1)].append(item)
+    return groups
+
+
+def build_single_input_layout(ordered_vars: list[str]) -> list[list[str]]:
+    # Keep the Gen2 familiar grouping: B/C pair and D/E pair vertically aligned.
+    col1, col2, col3 = [], [], []
+    used = set()
+
+    pair_specs = [
+        ("B_Barrier_Type", "C_Barrier_Thx", col2),
+        ("D_Barrier_Outer_Type", "E_Barrier_Outer_Thx", col3),
+    ]
+    vars_set = set(ordered_vars)
+    for type_col, thx_col, target_col in pair_specs:
+        if type_col in vars_set:
+            target_col.append(type_col)
+            used.add(type_col)
+        if thx_col in vars_set:
+            target_col.append(thx_col)
+            used.add(thx_col)
+
+    for var in ordered_vars:
+        if var in used:
+            continue
+        col1.append(var)
+
+    if not col1 and ordered_vars:
+        # Fallback for uncommon schemas where all variables are consumed by pairs.
+        col1 = [ordered_vars[0]]
+    return [col1, col2, col3]
+
+
+def annotate_inputs_with_tolerance(df: pd.DataFrame, tolerances: dict[str, float]) -> pd.DataFrame:
+    out = df.copy()
+    for var, tol in tolerances.items():
+        if var not in out.columns:
+            continue
+        out[var] = [
+            "" if pd.isna(v) else f"{float(v):.2f}<br>(+/-{float(tol):.1f}%)"
+            for v in out[var]
+        ]
+    return out
+
+
+def lhs_tolerance_rows(
+    base_row: dict,
+    tolerances: dict[str, float],
+    bounds: dict,
+    n_samples: int,
+) -> tuple[list[dict], list[str]]:
+    from scipy.stats import qmc
+
+    tol_vars = sorted(tolerances.keys())
+    lows = []
+    highs = []
+    clipped_vars = []
+
+    for var in tol_vars:
+        base_val = float(base_row[var])
+        tol = float(tolerances[var]) / 100.0
+        lo_raw = base_val * (1.0 - tol)
+        hi_raw = base_val * (1.0 + tol)
+        model_lo, model_hi = bounds.get(var, (lo_raw, hi_raw))
+        lo = max(lo_raw, float(model_lo))
+        hi = min(hi_raw, float(model_hi))
+        if lo > hi:
+            lo = hi = min(max(base_val, float(model_lo)), float(model_hi))
+        if lo != lo_raw or hi != hi_raw:
+            clipped_vars.append(var)
+        lows.append(lo)
+        highs.append(hi)
+
+    sampler = qmc.LatinHypercube(d=len(tol_vars), seed=TOLERANCE_LHS_SEED)
+    unit = sampler.random(n=int(n_samples))
+    scaled = qmc.scale(unit, lows, highs)
+
+    rows = []
+    for sample in scaled:
+        sampled_row = dict(base_row)
+        for idx, var in enumerate(tol_vars):
+            sampled_row[var] = float(sample[idx])
+        rows.append(sampled_row)
+    return rows, clipped_vars
+
+
+def collapse_tolerance_scenarios_to_range_row(df: pd.DataFrame, input_cols: list[str]) -> pd.DataFrame:
+    if len(df) <= 1 or "percent_case" not in df.columns:
+        return df
+
+    base_mask = df["percent_case"].astype(str).str.lower().eq("base")
+    base_row = df.loc[base_mask].head(1)
+    if base_row.empty:
+        base_row = df.head(1)
+
+    collapsed = dict(base_row.iloc[0].to_dict())
+    collapsed.pop("percent_case", None)
+
+    keep_as_is = set(input_cols) | {"predicted_at", "predict_mode", "opt_rank", "pareto_rank"}
+
+    for col in df.columns:
+        if col in keep_as_is or col == "percent_case":
+            continue
+
+        series = df[col]
+        numeric = pd.to_numeric(series, errors="coerce")
+        if numeric.notna().any():
+            lo = float(numeric.min())
+            hi = float(numeric.max())
+            collapsed[col] = f"{lo:.2f}~{hi:.2f}"
+            continue
+
+        values = []
+        for v in series:
+            if pd.isna(v):
+                continue
+            text = str(v)
+            if text == "":
+                continue
+            if text not in values:
+                values.append(text)
+
+        if not values:
+            collapsed[col] = ""
+        elif len(values) == 1:
+            collapsed[col] = values[0]
+        else:
+            collapsed[col] = " / ".join(values)
+
+    # TP/NoTP is always reported from the base prediction result.
+    if "predicted_label" in base_row.columns:
+        collapsed["predicted_label"] = str(base_row.iloc[0]["predicted_label"])
+
+    # Keep tolerance-induced TP probability range as hidden numeric bounds
+    # so we can annotate predicted_label when it crosses 0.5.
+    if "p_tp" in df.columns:
+        p_num = pd.to_numeric(df["p_tp"], errors="coerce")
+        if p_num.notna().any():
+            collapsed["__p_tp_tol_lo"] = float(p_num.min())
+            collapsed["__p_tp_tol_hi"] = float(p_num.max())
+
+    collapsed["__range_collapsed__"] = True
+
+    return pd.DataFrame([collapsed])
+
+
 def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
-    info = get_bundle_info(bundle)
-    bounds = info.get("continuous_bounds", {})
-    levels = info.get("discrete_levels", {})
+    schema = bundle_schema(bundle)
+    bounds = schema["continuous_bounds"]
+    levels = schema["discrete_levels"]
+    continuous_cols = schema["base_continuous_cols"]
+    discrete_cols = schema["discrete_cols"]
+    placeholders = CHEMISTRY_PLACEHOLDER_INPUTS.get(chemistry, {})
+
+    ordered_vars = schema_input_columns(bundle, chemistry)
 
     st.subheader("Single Prediction")
-    with st.form("single_predict_form"):
-        c1, c2, c3 = st.columns(3)
+    st.caption(f"Model inputs for {chemistry}: " + ", ".join(sorted(continuous_cols + discrete_cols)))
 
-        a_lo, a_hi = bounds.get("A_Cell_D", (8.0, 16.0))
-        c_lo, c_hi = bounds.get("C_Barrier_Thx", (0.5, 2.5))
-        e_lo, e_hi = bounds.get("E_Barrier_Outer_Thx", (1.1, 3.0))
-        f_lo, f_hi = bounds.get("F_ThermalResin_Thx", (0.5, 2.5))
-        g_lo, g_hi = bounds.get("G_CoolantLPM", (0.0, 30.0))
+    # Keep these controls outside the form so they react immediately without pressing Predict.
+    mode_cols = st.columns([1.0, 3.0])
+    mode_cols[0].markdown(
+        """
+<style>
+.tol-label-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+}
+.tol-help-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid rgba(120, 120, 120, 0.55);
+    color: rgba(110, 110, 110, 0.9);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(220, 220, 220, 0.25);
+    cursor: help;
+    position: relative;
+}
+.tol-help-icon::after {
+    content: "Set a tolerance per continuous variable. The tool explores the combined range with Latin Hypercube sampling and reports min~max of the predicted outputs.";
+    position: absolute;
+    left: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    min-width: 280px;
+    max-width: 360px;
+    background: #2b2b2b;
+    color: #f2f2f2;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.35;
+    border-radius: 6px;
+    padding: 8px 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 50;
+    white-space: normal;
+}
+.tol-help-icon:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+</style>
+<span class="tol-label-wrap"><b>Tolerance</b><span class="tol-help-icon">!</span></span>
+""",
+        unsafe_allow_html=True,
+    )
+    use_percent_for_cont = mode_cols[0].toggle(
+        "tolerance_toggle",
+        value=False,
+        label_visibility="collapsed",
+        key=f"single_percent_mode_{chemistry}",
+    )
 
-        b_levels = levels.get("B_Barrier_Type", ["Si1"])
-        d_levels = levels.get("D_Barrier_Outer_Type", ["PU", "Si1"])
+    var_tolerances: dict[str, float] = {}
+    if use_percent_for_cont and continuous_cols:
+        with st.expander("Per-variable tolerance (%)", expanded=True):
+            tol_cols = st.columns(min(3, len(continuous_cols)))
+            for idx, var in enumerate(sorted(continuous_cols)):
+                target = tol_cols[idx % len(tol_cols)]
+                var_tolerances[var] = target.slider(
+                    var,
+                    min_value=0.0,
+                    max_value=20.0,
+                    value=0.0,
+                    step=0.1,
+                    key=f"single_tol_{chemistry}_{var}",
+                )
 
-        A_Cell_D = number_input_with_hover_range(c1, "A_Cell_D", a_lo, a_hi)
-        F_ThermalResin_Thx = number_input_with_hover_range(c1, "F_ThermalResin_Thx", f_lo, f_hi)
-        G_CoolantLPM = None
-        if chemistry == "HV Mid-Ni Gen1":
-            G_CoolantLPM = number_input_with_hover_range(c1, "G_CoolantLPM", g_lo, g_hi)
+    with st.form(f"single_predict_form_{chemistry}"):
+        cols = st.columns(3)
+        groups = build_single_input_layout(ordered_vars)
 
-        B_Barrier_Type = selectbox_with_label(c2, "B_Barrier_Type", options=b_levels, index=0)
-        C_Barrier_Thx = number_input_with_hover_range(c2, "C_Barrier_Thx", c_lo, c_hi)
-
-        if chemistry == "HV Mid-Ni Gen1":
-            c3.markdown("<b>D_Barrier_Outer_Type</b>", unsafe_allow_html=True)
-            D_Barrier_Outer_Type = c3.text_input(
-                "D_Barrier_Outer_Type_input",
-                value="Si",
-                disabled=True,
-                label_visibility="collapsed",
-            )
-            c3.markdown("<b>E_Barrier_Outer_Thx</b>", unsafe_allow_html=True)
-            E_Barrier_Outer_Thx = c3.number_input(
-                "E_Barrier_Outer_Thx_input_fixed",
-                value=2.82,
-                step=0.01,
-                disabled=True,
-                label_visibility="collapsed",
-            )
-        else:
-            D_Barrier_Outer_Type = selectbox_with_label(c3, "D_Barrier_Outer_Type", options=d_levels, index=0)
-            E_Barrier_Outer_Thx = number_input_with_hover_range(c3, "E_Barrier_Outer_Thx", e_lo, e_hi)
+        row = {}
+        for col_idx, group in enumerate(groups[:3]):
+            container = cols[col_idx]
+            for var in group:
+                widget_key = f"single_{chemistry}_{var}"
+                if var in placeholders:
+                    disabled_placeholder_input(container, var, placeholders[var], key=widget_key)
+                elif var in discrete_cols:
+                    opts = list(levels.get(var, []))
+                    if not opts:
+                        opts = [""]
+                    row[var] = selectbox_with_label(container, var, options=opts, index=0, key=widget_key)
+                else:
+                    lo, hi = bounds.get(var, (0.0, 1.0))
+                    row[var] = number_input_with_hover_range(container, var, lo, hi, key=f"{widget_key}_abs")
 
         submitted = st.form_submit_button("Predict")
 
     if submitted:
-        row = {
-            "A_Cell_D": A_Cell_D,
-            "C_Barrier_Thx": C_Barrier_Thx,
-            "E_Barrier_Outer_Thx": E_Barrier_Outer_Thx,
-            "F_ThermalResin_Thx": F_ThermalResin_Thx,
-            "B_Barrier_Type": B_Barrier_Type,
-            "D_Barrier_Outer_Type": D_Barrier_Outer_Type,
+        scenario_rows = []
+        active_tolerances = {
+            var: float(tol)
+            for var, tol in var_tolerances.items()
+            if float(tol) > 0.0 and var in row
         }
-        if chemistry == "HV Mid-Ni Gen1":
-            row["G_CoolantLPM"] = G_CoolantLPM
-        input_df = pd.DataFrame([row])
+
+        if use_percent_for_cont and active_tolerances:
+            base_row = dict(row)
+            base_row["percent_case"] = "base"
+
+            sampled_rows, clipped_vars = lhs_tolerance_rows(
+                row,
+                active_tolerances,
+                bounds,
+                TOLERANCE_SAMPLES,
+            )
+            for sampled in sampled_rows:
+                sampled["percent_case"] = "sample"
+
+            scenario_rows = [base_row] + sampled_rows
+
+            st.info(
+                f"Explored {len(sampled_rows)} LHS samples across "
+                f"{len(active_tolerances)} continuous variables."
+            )
+            if clipped_vars:
+                st.warning(
+                    "Some sampled values exceeded model bounds and were clipped: "
+                    + ", ".join(clipped_vars)
+                )
+        else:
+            scenario_rows = [dict(row)]
+
+        input_df = pd.DataFrame(scenario_rows)
         try:
             pred_df = predict_with_bundle(bundle, input_df)
             result_df = pd.concat([input_df, pred_df], axis=1)
             result_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             result_df.insert(1, "predict_mode", "single")
+            result_df = collapse_tolerance_scenarios_to_range_row(result_df, ordered_vars)
             stash_pending_history("pending_single_history_json", result_df)
             st.success("Prediction succeeded")
-            render_centered_table(prediction_view_df(result_df, admin_mode))
+            shown_df = prediction_view_df(result_df, admin_mode)
+            if active_tolerances:
+                shown_df = annotate_inputs_with_tolerance(shown_df, active_tolerances)
+            render_centered_table(shown_df)
         except Exception as e:
             st.error(f"Prediction failed: {e}")
 
-    show_save_history_button("pending_single_history_json", "Save This Single Prediction to History")
+    show_save_history_button("pending_single_history_json", "Save This Single Prediction to History", chemistry)
 
 
-def batch_predict_ui(bundle, admin_mode: bool):
+def batch_predict_ui(bundle, admin_mode: bool, chemistry: str):
+    schema = bundle_schema(bundle)
+    required_cols = list(schema["base_continuous_cols"]) + list(schema["discrete_cols"])
+
     st.subheader("Batch Prediction (CSV)")
-    st.caption("필수 컬럼: A_Cell_D, C_Barrier_Thx, E_Barrier_Outer_Thx, F_ThermalResin_Thx, B_Barrier_Type, D_Barrier_Outer_Type")
+    st.caption(f"{chemistry} 필수 컬럼: " + ", ".join(sorted(required_cols)))
 
-    uploaded = st.file_uploader("Upload input CSV", type=["csv"])
+    uploaded = st.file_uploader("Upload input CSV", type=["csv"], key=f"batch_upload_{chemistry}")
     if uploaded is None:
         return
 
     try:
         input_df = pd.read_csv(uploaded)
+        missing = [col for col in required_cols if col not in input_df.columns]
+        if missing:
+            st.error("Missing required columns: " + ", ".join(missing))
+            return
+
         st.write("Preview")
         st.dataframe(input_df.head(10), use_container_width=True)
 
-        if st.button("Run Batch Prediction"):
+        if st.button("Run Batch Prediction", key=f"batch_run_{chemistry}"):
             pred_df = predict_with_bundle(bundle, input_df)
             out_df = pd.concat([input_df.reset_index(drop=True), pred_df.reset_index(drop=True)], axis=1)
             hist_df = out_df.copy()
@@ -831,42 +1486,44 @@ def batch_predict_ui(bundle, admin_mode: bool):
             st.download_button(
                 "Download Predictions CSV",
                 data=csv_bytes,
-                file_name="predictions.csv",
+                file_name=f"predictions_{history_file_name(chemistry)}",
                 mime="text/csv",
             )
 
-        show_save_history_button("pending_batch_history_json", "Save Last Batch Prediction to History")
+        show_save_history_button("pending_batch_history_json", "Save Last Batch Prediction to History", chemistry)
     except Exception as e:
         st.error(f"Batch prediction failed: {e}")
 
 
-def history_ui(admin_mode: bool):
+def history_ui(admin_mode: bool, chemistry: str):
     st.subheader("Prediction History")
-    st.caption(f"Current history file: {history_csv_path()}")
+    st.caption(f"Chemistry: {chemistry}")
+    st.caption(f"Current history file: {history_csv_path(chemistry)}")
     st.caption("Prediction history is saved only when you press a Save button after prediction.")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("Refresh History"):
+        if st.button("Refresh History", key=f"hist_refresh_{chemistry}"):
             st.rerun()
     with col2:
-        if st.button("Clear History"):
-            clear_history()
+        if st.button("Clear History", key=f"hist_clear_{chemistry}"):
+            clear_history(chemistry)
             st.success("History cleared")
             st.rerun()
 
-    hist = load_history()
+    hist = load_history(chemistry)
     if len(hist) == 0:
         st.info("No accumulated prediction history yet.")
         return
 
+    hist = hist.dropna(axis=1, how="all")
     hist_view = prediction_view_df(hist, admin_mode)
     st.write(f"Total rows: {len(hist)}")
     render_centered_table(hist_view.tail(200))
     st.download_button(
         "Download Full History CSV",
         data=hist_view.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-        file_name="prediction_history.csv",
+        file_name=history_file_name(chemistry),
         mime="text/csv",
     )
 
@@ -910,11 +1567,29 @@ def main():
             st.sidebar.error("Wrong password")
 
     st.subheader("Model")
-    chemistry = st.selectbox("Chemistry", options=CHEMISTRY_OPTIONS, index=0)
+    model_col1, model_col2, model_col3 = st.columns([1.2, 1.0, 1.0])
+    chemistry = model_col1.selectbox("Chemistry", options=CHEMISTRY_OPTIONS, index=0)
+    model_col2.selectbox(
+        "Confidence Level",
+        options=[90, 95, 99],
+        index=1,
+        key="confidence_level",
+        help="Prediction band is computed as pred ± z * std.",
+    )
+    model_col3.checkbox(
+        "Show Band",
+        value=True,
+        key="show_confidence_band",
+        help="When enabled, lower/upper confidence band columns are added to results.",
+    )
     selected_default_bundle = default_bundle_for_chemistry(chemistry)
 
     if admin_mode:
-        bundle_input = st.text_input("Bundle path", value=str(selected_default_bundle))
+        # Prevent stale admin path when chemistry selection changes.
+        if st.session_state.get("bundle_path_for_chem") != chemistry:
+            st.session_state["bundle_path_for_chem"] = chemistry
+            st.session_state["bundle_path_input"] = str(selected_default_bundle)
+        bundle_input = st.text_input("Bundle path", key="bundle_path_input")
         bundle_path = Path(bundle_input)
     else:
         bundle_path = selected_default_bundle
@@ -934,14 +1609,17 @@ def main():
         show_bundle_panel(bundle)
         st.divider()
 
+    st.session_state["active_input_order"] = schema_input_columns(bundle, chemistry)
+    st.session_state["active_chemistry"] = chemistry
+
     st.caption(f"Active chemistry: {chemistry}")
     tabs = st.tabs(["Single Prediction", "Batch Prediction", "Prediction History", "Optimize"])
     with tabs[0]:
         single_predict_ui(bundle, admin_mode, chemistry)
     with tabs[1]:
-        batch_predict_ui(bundle, admin_mode)
+        batch_predict_ui(bundle, admin_mode, chemistry)
     with tabs[2]:
-        history_ui(admin_mode)
+        history_ui(admin_mode, chemistry)
     with tabs[3]:
         optimize_ui(bundle, admin_mode, chemistry)
 
