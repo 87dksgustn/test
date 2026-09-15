@@ -52,6 +52,15 @@ ADMIN_ONLY_RESULT_COLUMNS = {
 }
 
 
+def tolerance_allowed_for_variable(chemistry: str, var_name: str) -> bool:
+    # Mid-Ni Gen1: do not apply tolerance to G variable.
+    if chemistry == "HV Mid-Ni Gen1":
+        token = str(var_name).strip()
+        if token == "G" or token.startswith("G_"):
+            return False
+    return True
+
+
 def is_admin_only_column(col: str) -> bool:
     name = str(col)
     lower = name.lower()
@@ -291,13 +300,13 @@ def is_admin_mode() -> bool:
 def active_confidence_level() -> int:
     if st is None:
         return 95
-    return int(st.session_state.get("confidence_level", 95))
+    return int(st.session_state.get("admin_confidence_level_persist", 95))
 
 
 def active_show_band() -> bool:
     if st is None:
         return True
-    return bool(st.session_state.get("show_confidence_band", True))
+    return bool(st.session_state.get("admin_show_confidence_band_persist", True))
 
 
 def bootstrap_interval_for_ptp(values: pd.Series, level: int, n_size: int = PTP_BOOTSTRAP_N, n_boot: int = PTP_BOOTSTRAP_SAMPLES):
@@ -1293,7 +1302,6 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
     ordered_vars = schema_input_columns(bundle, chemistry)
 
     st.subheader("Single Prediction")
-    st.caption(f"Model inputs for {chemistry}: " + ", ".join(sorted(continuous_cols + discrete_cols)))
 
     # Keep these controls outside the form so they react immediately without pressing Predict.
     mode_cols = st.columns([1.0, 3.0])
@@ -1360,19 +1368,6 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
     )
 
     var_tolerances: dict[str, float] = {}
-    if use_percent_for_cont and continuous_cols:
-        with st.expander("Per-variable tolerance (%)", expanded=True):
-            tol_cols = st.columns(min(3, len(continuous_cols)))
-            for idx, var in enumerate(sorted(continuous_cols)):
-                target = tol_cols[idx % len(tol_cols)]
-                var_tolerances[var] = target.slider(
-                    var,
-                    min_value=0.0,
-                    max_value=20.0,
-                    value=0.0,
-                    step=0.1,
-                    key=f"single_tol_{chemistry}_{var}",
-                )
 
     with st.form(f"single_predict_form_{chemistry}"):
         cols = st.columns(3)
@@ -1384,15 +1379,73 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
             for var in group:
                 widget_key = f"single_{chemistry}_{var}"
                 if var in placeholders:
-                    disabled_placeholder_input(container, var, placeholders[var], key=widget_key)
+                    header_cols = container.columns([1.2, 1.8], vertical_alignment="center")
+                    header_cols[0].markdown(
+                        f"<span title=\"Not used by the current model\"><b>{var}</b></span>",
+                        unsafe_allow_html=True,
+                    )
+                    header_cols[1].markdown("<div style='height: 3.45rem;'></div>", unsafe_allow_html=True)
+                    fixed_value = placeholders[var]
+                    if isinstance(fixed_value, (int, float)) and not isinstance(fixed_value, bool):
+                        container.number_input(
+                            f"{var}_input_fixed",
+                            value=float(fixed_value),
+                            step=0.01,
+                            disabled=True,
+                            label_visibility="collapsed",
+                            key=widget_key,
+                        )
+                    else:
+                        container.text_input(
+                            f"{var}_input_fixed",
+                            value=str(fixed_value),
+                            disabled=True,
+                            label_visibility="collapsed",
+                            key=widget_key,
+                        )
                 elif var in discrete_cols:
+                    header_cols = container.columns([1.2, 1.8], vertical_alignment="center")
+                    header_cols[0].markdown(f"<b>{var}</b>", unsafe_allow_html=True)
+                    header_cols[1].markdown("<div style='height: 3.45rem;'></div>", unsafe_allow_html=True)
                     opts = list(levels.get(var, []))
                     if not opts:
                         opts = [""]
-                    row[var] = selectbox_with_label(container, var, options=opts, index=0, key=widget_key)
+                    row[var] = container.selectbox(
+                        f"{var}_input",
+                        options=opts,
+                        index=0,
+                        label_visibility="collapsed",
+                        key=widget_key,
+                    )
                 else:
                     lo, hi = bounds.get(var, (0.0, 1.0))
-                    row[var] = number_input_with_hover_range(container, var, lo, hi, key=f"{widget_key}_abs")
+                    allow_tolerance = tolerance_allowed_for_variable(chemistry, var)
+                    header_cols = container.columns([1.2, 1.8], vertical_alignment="center")
+                    header_cols[0].markdown(
+                        f"<span title=\"{range_help_text(lo, hi)}\"><b>{var}</b></span>",
+                        unsafe_allow_html=True,
+                    )
+                    var_tolerances[var] = header_cols[1].slider(
+                        "tolerance",
+                        min_value=0.0,
+                        max_value=10.0,
+                        value=0.0,
+                        step=0.1,
+                        disabled=(not use_percent_for_cont),
+                        label_visibility="collapsed",
+                        key=f"single_tol_{chemistry}_{var}",
+                    ) if allow_tolerance else 0.0
+                    if not allow_tolerance:
+                        header_cols[1].markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
+                    row[var] = container.number_input(
+                        f"{var}_input",
+                        min_value=float(lo),
+                        max_value=float(hi),
+                        value=float((float(lo) + float(hi)) / 2),
+                        step=0.01,
+                        label_visibility="collapsed",
+                        key=f"{widget_key}_abs",
+                    )
 
         submitted = st.form_submit_button("Predict")
 
@@ -1401,7 +1454,7 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
         active_tolerances = {
             var: float(tol)
             for var, tol in var_tolerances.items()
-            if float(tol) > 0.0 and var in row
+            if float(tol) > 0.0 and var in row and tolerance_allowed_for_variable(chemistry, var)
         }
 
         if use_percent_for_cont and active_tolerances:
@@ -1416,7 +1469,6 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
             )
             for sampled in sampled_rows:
                 sampled["percent_case"] = "sample"
-
             scenario_rows = [base_row] + sampled_rows
 
             st.info(
@@ -1497,9 +1549,6 @@ def batch_predict_ui(bundle, admin_mode: bool, chemistry: str):
 
 def history_ui(admin_mode: bool, chemistry: str):
     st.subheader("Prediction History")
-    st.caption(f"Chemistry: {chemistry}")
-    st.caption(f"Current history file: {history_csv_path(chemistry)}")
-    st.caption("Prediction history is saved only when you press a Save button after prediction.")
 
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -1550,6 +1599,10 @@ def main():
 
     if "is_admin" not in st.session_state:
         st.session_state["is_admin"] = False
+    if "admin_confidence_level_persist" not in st.session_state:
+        st.session_state["admin_confidence_level_persist"] = int(st.session_state.get("admin_confidence_level", 95))
+    if "admin_show_confidence_band_persist" not in st.session_state:
+        st.session_state["admin_show_confidence_band_persist"] = bool(st.session_state.get("admin_show_confidence_band", True))
     admin_mode = is_admin_mode()
 
     st.sidebar.header("Admin Mode")
@@ -1569,19 +1622,30 @@ def main():
     st.subheader("Model")
     model_col1, model_col2, model_col3 = st.columns([1.2, 1.0, 1.0])
     chemistry = model_col1.selectbox("Chemistry", options=CHEMISTRY_OPTIONS, index=0)
-    model_col2.selectbox(
-        "Confidence Level",
-        options=[90, 95, 99],
-        index=1,
-        key="confidence_level",
-        help="Prediction band is computed as pred ± z * std.",
-    )
-    model_col3.checkbox(
-        "Show Band",
-        value=True,
-        key="show_confidence_band",
-        help="When enabled, lower/upper confidence band columns are added to results.",
-    )
+    if admin_mode:
+        if "admin_confidence_level_ui" not in st.session_state:
+            st.session_state["admin_confidence_level_ui"] = int(st.session_state.get("admin_confidence_level_persist", 95))
+        if "admin_show_confidence_band_ui" not in st.session_state:
+            st.session_state["admin_show_confidence_band_ui"] = bool(st.session_state.get("admin_show_confidence_band_persist", True))
+
+        admin_conf = int(st.session_state.get("admin_confidence_level_ui", 95))
+        if admin_conf not in [90, 95, 99]:
+            admin_conf = 95
+        model_col2.selectbox(
+            "Confidence Level",
+            options=[90, 95, 99],
+            index=[90, 95, 99].index(admin_conf),
+            key="admin_confidence_level_ui",
+            help="Prediction band is computed as pred ± z * std.",
+        )
+        model_col3.checkbox(
+            "Show Band",
+            value=bool(st.session_state.get("admin_show_confidence_band_ui", True)),
+            key="admin_show_confidence_band_ui",
+            help="When enabled, lower/upper confidence band columns are added to results.",
+        )
+        st.session_state["admin_confidence_level_persist"] = int(st.session_state.get("admin_confidence_level_ui", 95))
+        st.session_state["admin_show_confidence_band_persist"] = bool(st.session_state.get("admin_show_confidence_band_ui", True))
     selected_default_bundle = default_bundle_for_chemistry(chemistry)
 
     if admin_mode:

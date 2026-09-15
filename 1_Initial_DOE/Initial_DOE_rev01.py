@@ -31,7 +31,7 @@ continuous_vars = {
     # "Cell_H": (300, 600),
     # "Cell_W": (90, 120),
     "Cell_D": (8, 16),
-    "Barrier_Thx": (0.5, 2.5),
+    "Barrier_Thx": (0.25, 2.0),
     "Barrier_Outer_Thx": (1.1, 3.0),
     # "Cooling_LPM": (0.0, 35.0),
     # "Venting_Gap": (1.0, 10.0),
@@ -128,7 +128,7 @@ _boundary_focus_checked = False
 output_csv = "initial_DOE_best_seed_greedy_maximin.csv"
 optuna_result_csv = "optuna_seed_optimization_results.csv"
 group_distance_csv = "best_seed_group_min_distances.csv"
-trials_dir = Path("Trials")
+trials_dir = Path("Trials") / "LFP_Gen2B"
 
 
 # =========================================================
@@ -1521,7 +1521,7 @@ def save_sampling_comparison_plots(
 def create_trial_result_dir(trials_dir, bias_score, coverage_score, A_score):
     trials_dir.mkdir(exist_ok=True)
 
-    result_dir = trials_dir / f"bias{bias_score:.4f}_cvrg{coverage_score:.4f}_A{A_score:.4f}"
+    result_dir = trials_dir / f"cvrg{coverage_score:.4f}_A{A_score:.4f}_bias{bias_score:.4f}"
     result_dir.mkdir(exist_ok=True)
 
     return result_dir

@@ -1,0 +1,1 @@
+cd "c:\Users\hyunsoo.an\Desktop\Barrier_Stop_Tool\1_Initial_DOE"; foreach ($i in 1..500) { Write-Host "Run $i/500"; python .\Initial_DOE_rev01.py; if ($LASTEXITCODE -ne 0) { break } }
