@@ -117,6 +117,39 @@ def active_chemistry() -> str:
     return str(st.session_state.get("active_chemistry", ""))
 
 
+def chemistry_output_base_order(chemistry: str) -> list[str]:
+    if chemistry == "LFP Gen2B":
+        return ["predicted_label", "tmax", "Max_Power", "Time_MaxT", "Time_Max_Power"]
+    if chemistry == "LFP Gen2A":
+        return ["predicted_label", "tmax", "Max_Power"]
+    if chemistry == "HV Mid-Ni Gen1":
+        return ["predicted_label", "tmax", "MaxT_TB_Top", "MaxT_TB_Btm", "Max_Power", "Time_MaxT", "Time_Max_Power"]
+    return ["predicted_label", "tmax", "Max_Power", "Time_MaxT"]
+
+
+def output_base_key(col_name: str) -> str:
+    name = str(col_name)
+    if name == "predicted_label":
+        return "predicted_label"
+    if name.endswith("_pred"):
+        return name[: -len("_pred")]
+    if "_ci" in name and name.endswith("_band"):
+        head = name[: name.find("_ci")]
+        return head[: -len("_pred")] if head.endswith("_pred") else head
+    return name
+
+
+def is_output_display_column(col_name: str) -> bool:
+    name = str(col_name)
+    if name == "predicted_label":
+        return True
+    if name.endswith("_pred") or name.endswith("_std"):
+        return True
+    if "_ci" in name and name.endswith("_band"):
+        return True
+    return False
+
+
 DEFAULT_OPT_TRIALS_PER_COMBO = 60
 DEFAULT_OPT_TOP_N = 10
 DEFAULT_OPT_PTP_UPPER = 0.50
@@ -373,8 +406,9 @@ def add_confidence_band_columns(df: pd.DataFrame) -> pd.DataFrame:
             for lo, hi in zip(lower, upper)
         ]
 
-        # MidNi user view requires both labels: Time_Max_Power and Time_Tmax.
-        if active_chemistry() == "HV Mid-Ni Gen1" and base == "Time_MaxT":
+        # Keep the Time_Tmax alias available across chemistries, because the
+        # bundled output is named Time_MaxT while the user-facing label is Time_Tmax.
+        if base == "Time_MaxT":
             out[f"Time_Tmax_ci{level}_band"] = out[band_col]
 
     return out
@@ -444,19 +478,49 @@ def prediction_view_df(df: pd.DataFrame, admin_mode: bool) -> pd.DataFrame:
             filtered.append(col)
         remaining = filtered
 
+    desired_bases = chemistry_output_base_order(active_chemistry())
+    desired_base_set = set(desired_bases)
+    desired_cols = []
+    used_cols = set()
+    for base in desired_bases:
+        for col in remaining:
+            if col in used_cols:
+                continue
+            if output_base_key(col) == base:
+                desired_cols.append(col)
+                used_cols.add(col)
+
+    if not admin_mode:
+        non_output_cols = [col for col in remaining if (col not in used_cols and not is_output_display_column(col))]
+        remaining = desired_cols + non_output_cols
+    else:
+        rest_cols = [col for col in remaining if col not in used_cols]
+        remaining = desired_cols + rest_cols
+
     return df.loc[:, ordered + remaining]
 
 
-def display_name_for_output(base_name: str) -> str:
+def display_name_for_output(base_name: str, chemistry: str) -> str:
     if base_name == "tmax":
-        return "Tmax_adj"
+        if chemistry == "HV Mid-Ni Gen1":
+            return "MaxT_adj_Center"
+        return "MaxT_adj"
+    if chemistry == "HV Mid-Ni Gen1" and base_name == "MaxT_TB_Top":
+        return "MaxT_adj_Top"
+    if chemistry == "HV Mid-Ni Gen1" and base_name == "MaxT_TB_Btm":
+        return "MaxT_adj_Btm"
+    if base_name == "Max_Power":
+        return "MaxPower"
     if base_name == "Time_MaxT":
-        return "Time_Max_Power"
+        return "Time_MaxT"
+    if base_name == "Time_Max_Power":
+        return "Time_MaxPower"
     return base_name
 
 
 def display_table_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    chemistry = active_chemistry()
 
     # Format numeric values before renaming columns to avoid duplicate-name
     # collisions (e.g., pred and band both mapped to the same display label).
@@ -473,15 +537,15 @@ def display_table_df(df: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         name = str(col)
         if name == "predicted_label":
-            rename_map[col] = "TP/No TP"
+            rename_map[col] = "TP/NoTP"
         elif "_ci" in name and name.endswith("_band"):
             head = name[: -len("_band")]
             ci_pos = head.find("_ci")
             target = head[:ci_pos]
             label_target = target[: -len("_pred")] if target.endswith("_pred") else target
-            rename_map[col] = display_name_for_output(label_target)
+            rename_map[col] = display_name_for_output(label_target, chemistry)
         elif name.endswith("_pred"):
-            rename_map[col] = display_name_for_output(name[: -len("_pred")])
+            rename_map[col] = display_name_for_output(name[: -len("_pred")], chemistry)
     if rename_map:
         out = out.rename(columns=rename_map)
     return out
@@ -532,7 +596,12 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
     cols_to_mask = [col for col in ["tmax_pred", "tmax_std"] if col in out.columns]
     cols_to_mask.extend(
         col for col in out.columns
-        if col.lower() in {"max_power_pred", "max_power_std", "time_max_power_pred", "time_max_power_std"}
+        if col.lower() in {
+            "max_power_pred", "max_power_std",
+            "time_max_power_pred", "time_max_power_std",
+            "time_maxt_pred", "time_maxt_std",
+            "time_tmax_pred", "time_tmax_std",
+        }
     )
     if cols_to_mask:
         out.loc[tp_mask, cols_to_mask] = pd.NA
@@ -786,6 +855,9 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
     st.subheader("Optimize")
     st.caption("Optuna NSGA-II optimization")
 
+    cache_df_key = f"opt_cached_out_df_{chemistry}"
+    cache_params_key = f"opt_cached_params_{chemistry}"
+
     c1, c2, c3 = st.columns(3)
     trials_per_combo = c1.number_input("Trials per combo", min_value=10, max_value=500, value=DEFAULT_OPT_TRIALS_PER_COMBO, step=10)
     top_n = c2.number_input("Top N", min_value=1, max_value=200, value=DEFAULT_OPT_TOP_N, step=1)
@@ -848,39 +920,68 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
     if fixed_overrides:
         st.caption("Applied fixed variables: " + ", ".join(f"{k}={v}" for k, v in fixed_overrides.items()))
 
-    if not st.button("Run Optimization"):
-        return
+    run_clicked = st.button("Run Optimization")
+    out_df = None
+    progress = None
+    status = None
 
-    progress = st.progress(0, text="Preparing optimization...")
-    status = st.empty()
+    if run_clicked:
+        progress = st.progress(0, text="Preparing optimization...")
+        status = st.empty()
 
-    status.info("Step 1/4: Setting search space")
-    candidate_df = run_optuna_nsga2(
-        bundle,
-        chemistry,
-        int(trials_per_combo),
-        int(seed),
-        fixed_overrides=fixed_overrides,
-        ptp_upper=float(ptp_upper),
-        population_size=int(population_size),
-        progress=progress,
-        status=status,
-    )
-    progress.progress(60, text="NSGA-II trials complete")
-    if len(candidate_df) == 0:
-        st.error("No completed Optuna trials were produced.")
-        return
+        status.info("Step 1/4: Setting search space")
+        candidate_df = run_optuna_nsga2(
+            bundle,
+            chemistry,
+            int(trials_per_combo),
+            int(seed),
+            fixed_overrides=fixed_overrides,
+            ptp_upper=float(ptp_upper),
+            population_size=int(population_size),
+            progress=progress,
+            status=status,
+        )
+        progress.progress(60, text="NSGA-II trials complete")
+        if len(candidate_df) == 0:
+            st.error("No completed Optuna trials were produced.")
+            return
 
-    out_df = candidate_df.copy()
-    out_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    out_df.insert(1, "predict_mode", "optimize")
-    out_df["tmax_pred_given_notp"] = out_df.get("tmax_pred")
+        out_df = candidate_df.copy()
+        out_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        out_df.insert(1, "predict_mode", "optimize")
+        out_df["tmax_pred_given_notp"] = out_df.get("tmax_pred")
+        st.session_state[cache_df_key] = out_df.copy()
+        st.session_state[cache_params_key] = {
+            "trials_per_combo": int(trials_per_combo),
+            "top_n": int(top_n),
+            "seed": int(seed),
+            "ptp_upper": float(ptp_upper),
+            "population_size": int(population_size),
+            "fixed_overrides": dict(fixed_overrides),
+        }
+    else:
+        cached_df = st.session_state.get(cache_df_key)
+        if isinstance(cached_df, pd.DataFrame) and len(cached_df) > 0:
+            out_df = cached_df.copy()
+            cached_params = st.session_state.get(cache_params_key, {})
+            if isinstance(cached_params, dict) and cached_params:
+                st.caption(
+                    "Showing last optimization result "
+                    f"(trials={cached_params.get('trials_per_combo', '-')}, "
+                    f"seed={cached_params.get('seed', '-')}, "
+                    f"pop={cached_params.get('population_size', '-')})"
+                )
+        else:
+            return
 
-    status.info("Step 3/4: Applying feasibility and ranking")
+    if status is not None:
+        status.info("Step 3/4: Applying feasibility and ranking")
     feasible_df = out_df.loc[out_df["p_tp"] < float(ptp_upper)].copy() if "p_tp" in out_df.columns else out_df.copy()
     if len(feasible_df) == 0:
-        progress.progress(100, text="Done")
-        status.warning("Finished: no feasible candidates")
+        if progress is not None:
+            progress.progress(100, text="Done")
+        if status is not None:
+            status.warning("Finished: no feasible candidates")
         st.warning("No feasible candidates found under the current p_tp threshold.")
         render_centered_table(prediction_view_df(out_df.head(20), admin_mode))
         stash_pending_history("pending_opt_history_json", out_df)
@@ -906,8 +1007,9 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
         pareto_df = pareto_df.sort_values(["p_tp", "tmax_pred_given_notp", "C_Barrier_Thx"], ascending=[False, False, True]).reset_index(drop=True)
         pareto_df.insert(0, "pareto_rank", np.arange(1, len(pareto_df) + 1, dtype=int))
 
-    progress.progress(100, text="Optimization complete")
-    status.success("Step 4/4: Completed")
+    if run_clicked:
+        progress.progress(100, text="Optimization complete")
+        status.success("Step 4/4: Completed")
     st.success(f"Optimization done: total={len(out_df)}, feasible={len(feasible_df)}, top_n={len(top_df)}")
 
     st.markdown("Top Recommendations")
@@ -962,36 +1064,38 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
                 key="opt_plot_color_by",
             )
 
-            fig, ax = plt.subplots(figsize=(9, 6), dpi=140)
+            plot_scale = 2.0 / 3.0
+            fig, ax = plt.subplots(figsize=(6.0 * plot_scale, 4.0 * plot_scale), dpi=140)
 
             if color_by == "none":
                 ax.scatter(
                     feasible_df[x_col], feasible_df[y_col],
-                    s=18, c="#b0b0b0", alpha=0.45, label="Feasible"
+                    s=18 * plot_scale, c="#b0b0b0", alpha=0.45, label="Feasible"
                 )
             else:
                 sc = ax.scatter(
                     feasible_df[x_col], feasible_df[y_col],
-                    s=20, c=feasible_df[color_by], cmap="viridis", alpha=0.55, label="Feasible"
+                    s=20 * plot_scale, c=feasible_df[color_by], cmap="viridis", alpha=0.55, label="Feasible"
                 )
                 cbar = fig.colorbar(sc, ax=ax)
-                cbar.set_label(color_by)
+                cbar.set_label(color_by, fontsize=9 * plot_scale)
+                cbar.ax.tick_params(labelsize=8 * plot_scale)
 
             if len(pareto_df) > 0 and x_col in pareto_df.columns and y_col in pareto_df.columns:
                 pareto_sorted = pareto_df.sort_values(x_col, ascending=True)
                 ax.plot(
                     pareto_sorted[x_col], pareto_sorted[y_col],
-                    color="#1f77b4", linewidth=2.0, label="Pareto Front"
+                    color="#1f77b4", linewidth=2.0 * plot_scale, label="Pareto Front"
                 )
                 ax.scatter(
                     pareto_sorted[x_col], pareto_sorted[y_col],
-                    s=36, c="#1f77b4", edgecolors="white", linewidths=0.6
+                    s=36 * plot_scale, c="#1f77b4", edgecolors="white", linewidths=0.6 * plot_scale
                 )
 
             if len(top_df) > 0 and x_col in top_df.columns and y_col in top_df.columns:
                 ax.scatter(
                     top_df[x_col], top_df[y_col],
-                    s=60, c="#d62728", marker="o", edgecolors="black", linewidths=0.7,
+                    s=20 * plot_scale, c="#d62728", marker="o", edgecolors="black", linewidths=0.7 * plot_scale,
                     label="Top Recommendations"
                 )
                 if "opt_rank" in top_df.columns:
@@ -1000,16 +1104,17 @@ def optimize_ui(bundle, admin_mode: bool, chemistry: str):
                             str(int(row["opt_rank"])),
                             (row[x_col], row[y_col]),
                             textcoords="offset points",
-                            xytext=(4, 4),
-                            fontsize=8,
+                            xytext=(max(1, int(4 * plot_scale)), max(1, int(4 * plot_scale))),
+                            fontsize=max(1, 8 * plot_scale),
                             color="#d62728",
                         )
 
-            ax.set_xlabel(x_col)
-            ax.set_ylabel(y_col)
-            ax.set_title(f"Optimize Plot ({chemistry})")
-            ax.grid(alpha=0.25, linestyle="--")
-            ax.legend(loc="best")
+            ax.set_xlabel(x_col, fontsize=10 * plot_scale)
+            ax.set_ylabel(y_col, fontsize=10 * plot_scale)
+            ax.set_title(f"Optimize Plot ({chemistry})", fontsize=12 * plot_scale)
+            ax.tick_params(axis="both", labelsize=9 * plot_scale)
+            ax.grid(alpha=0.25, linestyle="--", linewidth=0.8 * plot_scale)
+            ax.legend(loc="best", fontsize=9 * plot_scale)
             fig.tight_layout()
 
             st.pyplot(fig, clear_figure=False)
@@ -1147,6 +1252,12 @@ def chunk_into_columns(items: list[str], n_cols: int) -> list[list[str]]:
     for idx, item in enumerate(items):
         groups[min(idx // per, n_cols - 1)].append(item)
     return groups
+
+
+def variable_note_for_field(chemistry: str, var_name: str) -> str | None:
+    if chemistry == "HV Mid-Ni Gen1" and var_name == "G_Coolant_LPM":
+        return "Initial Temp : 25℃, Recirculation"
+    return None
 
 
 def build_single_input_layout(ordered_vars: list[str]) -> list[list[str]]:
@@ -1384,6 +1495,12 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
                         f"<span title=\"Not used by the current model\"><b>{var}</b></span>",
                         unsafe_allow_html=True,
                     )
+                    note = variable_note_for_field(chemistry, var)
+                    if note:
+                        header_cols[0].markdown(
+                            f"<div style='color: #6b7280; font-size: 12px; margin-top: 2px; line-height: 1.3;'>{note}</div>",
+                            unsafe_allow_html=True,
+                        )
                     header_cols[1].markdown("<div style='height: 3.45rem;'></div>", unsafe_allow_html=True)
                     fixed_value = placeholders[var]
                     if isinstance(fixed_value, (int, float)) and not isinstance(fixed_value, bool):
@@ -1406,6 +1523,12 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
                 elif var in discrete_cols:
                     header_cols = container.columns([1.2, 1.8], vertical_alignment="center")
                     header_cols[0].markdown(f"<b>{var}</b>", unsafe_allow_html=True)
+                    note = variable_note_for_field(chemistry, var)
+                    if note:
+                        header_cols[0].markdown(
+                            f"<div style='color: #6b7280; font-size: 12px; margin-top: 2px; line-height: 1.3;'>{note}</div>",
+                            unsafe_allow_html=True,
+                        )
                     header_cols[1].markdown("<div style='height: 3.45rem;'></div>", unsafe_allow_html=True)
                     opts = list(levels.get(var, []))
                     if not opts:
@@ -1425,6 +1548,12 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
                         f"<span title=\"{range_help_text(lo, hi)}\"><b>{var}</b></span>",
                         unsafe_allow_html=True,
                     )
+                    note = variable_note_for_field(chemistry, var)
+                    if note:
+                        header_cols[0].markdown(
+                            f"<div style='color: #6b7280; font-size: 12px; margin-top: 2px; line-height: 1.3;'>{note}</div>",
+                            unsafe_allow_html=True,
+                        )
                     var_tolerances[var] = header_cols[1].slider(
                         "tolerance",
                         min_value=0.0,
@@ -1690,3 +1819,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# %%

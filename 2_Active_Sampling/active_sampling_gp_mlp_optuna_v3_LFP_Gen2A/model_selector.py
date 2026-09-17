@@ -97,7 +97,11 @@ def evaluate_holdout_model(model_kind, x_train, y_class, y_tmax, y_extra, config
             extra_pred_notp = extra_pred[pass_mask] if len(extra_pred) == len(yva) else extra_pred
             for i, col in enumerate(extra_cols):
                 try:
-                    col_metrics = regression_metrics(eva[pass_mask, i], extra_pred_notp[:, i])
+                    y_valid = np.isfinite(eva[pass_mask, i])
+                    if not np.any(y_valid):
+                        out["extra_metrics"][col] = {"rmse": np.nan, "r2": np.nan, "mae": np.nan}
+                        continue
+                    col_metrics = regression_metrics(eva[pass_mask, i][y_valid], extra_pred_notp[y_valid, i])
                     out["extra_metrics"][col] = {
                         "rmse": float(col_metrics.get("tmax_rmse", np.nan)),
                         "r2": float(col_metrics.get("tmax_r2", np.nan)),

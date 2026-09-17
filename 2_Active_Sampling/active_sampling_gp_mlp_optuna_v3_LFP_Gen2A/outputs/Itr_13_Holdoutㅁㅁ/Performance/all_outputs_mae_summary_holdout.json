@@ -1,0 +1,49 @@
+{
+  "study_root": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2A",
+  "latest_itr": "Itr_13_Holdout",
+  "selected_model": "hybrid",
+  "final_csv": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2A\\z_Final_Test_Dataset.csv",
+  "n_notp_eval": 25,
+  "metrics": [
+    {
+      "target": "MaxT_TB",
+      "pred_col": "tmax_pred",
+      "n": 25,
+      "mae": 3.977271266045591,
+      "median_ae": 2.6015908407854624,
+      "p90_ae": 8.463625304945788,
+      "rmse": 5.4312303609397325,
+      "r2": 0.9129480168535866
+    },
+    {
+      "target": "MaxT_Adj_Y",
+      "pred_col": "MaxT_Adj_Y_pred",
+      "n": 25,
+      "mae": 0.0020079594613780427,
+      "median_ae": 0.001552145702778881,
+      "p90_ae": 0.003876794886848011,
+      "rmse": 0.002379999403549118,
+      "r2": 0.006536747781944907
+    },
+    {
+      "target": "MaxT_Adj_Z",
+      "pred_col": "MaxT_Adj_Z_pred",
+      "n": 25,
+      "mae": 0.00010947898848405413,
+      "median_ae": 0.00012209474361631056,
+      "p90_ae": 0.0001856050881883592,
+      "rmse": 0.00012448358916182563,
+      "r2": -0.02036730391905195
+    },
+    {
+      "target": "Max_Power",
+      "pred_col": "Max_Power_pred",
+      "n": 25,
+      "mae": 3.7508014051492684,
+      "median_ae": 3.6402030824556277,
+      "p90_ae": 6.47711646518542,
+      "rmse": 4.3988358156885825,
+      "r2": 0.995107019932235
+    }
+  ]
+}

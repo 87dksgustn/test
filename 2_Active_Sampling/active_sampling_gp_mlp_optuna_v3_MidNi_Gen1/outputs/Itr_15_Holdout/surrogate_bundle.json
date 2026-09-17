@@ -1,6 +1,6 @@
 {
   "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\\outputs\\Try_1\\surrogate_bundle.pkl",
-  "created_at": "2026-09-08T13:26:42",
+  "created_at": "2026-09-15T14:57:25",
   "config": {
     "base_continuous_cols": [
       "A_Cell_D",
@@ -57,7 +57,8 @@
       "MaxT_TB_Btm",
       "MaxT_Adj_Y",
       "MaxT_Adj_Z",
-      "Max_Power"
+      "Max_Power",
+      "Time_Max_Power"
     ],
     "time_feature_cols": [
       "Time_MaxT"

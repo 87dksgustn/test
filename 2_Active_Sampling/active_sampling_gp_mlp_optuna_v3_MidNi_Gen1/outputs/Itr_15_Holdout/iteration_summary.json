@@ -46,15 +46,15 @@
   "holdout_tmax_rmse": 0.9654072413816474,
   "holdout_tmax_r2": 0.9698726792449912,
   "holdout_tmax_n": 35,
-  "boundary_count": 11,
+  "boundary_count": 14,
   "notp_high_tmax_count": 4,
   "uncertainty_sparse_count": 1,
   "random_check_count": 1,
-  "fill_mixed_count": 1,
+  "fill_mixed_count": 0,
   "n_unique_combos_selected": 1,
   "uncertainty_metric_source": "clf_uncertainty_scaled",
   "uncertainty_high_threshold": 0.7,
-  "uncertainty_mean": 0.4978193626134084,
-  "uncertainty_p90": 0.8508514132682814,
-  "uncertainty_high_ratio": 0.35
+  "uncertainty_mean": 0.5529250217202551,
+  "uncertainty_p90": 0.8951449323486089,
+  "uncertainty_high_ratio": 0.4090909090909091
 }

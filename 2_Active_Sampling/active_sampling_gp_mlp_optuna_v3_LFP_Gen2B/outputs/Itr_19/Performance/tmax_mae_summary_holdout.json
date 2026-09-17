@@ -1,0 +1,10 @@
+{
+  "evaluation": "Final test NoTP only (Itr_19 model)",
+  "n_samples": 39,
+  "tmax_target_col": "MaxT_TB",
+  "mae": 1.0591446728783176,
+  "median_ae": 0.6565246795739199,
+  "p90_ae": 2.6563899933855173,
+  "rmse": 1.5252550153441629,
+  "r2": 0.9985430112694441
+}

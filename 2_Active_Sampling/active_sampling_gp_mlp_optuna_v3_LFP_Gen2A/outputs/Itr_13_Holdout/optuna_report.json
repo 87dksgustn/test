@@ -19,7 +19,7 @@
     "use_ard_in_optuna": false
   },
   "mlp": {
-    "best_value": 0.8138811832702285,
+    "best_value": 0.8098508523509389,
     "n_trials": 10,
     "best_params": {
       "n_layers": 2,

@@ -1,0 +1,10 @@
+{
+  "evaluation": "Final test NoTP only (Itr_13_Holdout refit model)",
+  "n_samples": 25,
+  "tmax_target_col": "MaxT_TB",
+  "mae": 3.977271266045591,
+  "median_ae": 2.6015908407854624,
+  "p90_ae": 8.463625304945788,
+  "rmse": 5.4312303609397325,
+  "r2": 0.9129480168535866
+}

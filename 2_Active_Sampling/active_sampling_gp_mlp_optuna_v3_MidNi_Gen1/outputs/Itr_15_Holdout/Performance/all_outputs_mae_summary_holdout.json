@@ -1,0 +1,88 @@
+{
+  "study_root": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_MidNi_Gen1",
+  "latest_itr": "Itr_15_Holdout",
+  "final_csv": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\\z_Final_Test_Dataset.csv",
+  "n_notp_eval": 35,
+  "metrics": [
+    {
+      "target": "MaxT_TB_Center",
+      "pred_col": "tmax_pred",
+      "n": 35,
+      "mae": 0.6780659740624994,
+      "median_ae": 0.40223207890514345,
+      "p90_ae": 1.6183288621529301,
+      "rmse": 0.9654072413816474,
+      "r2": 0.9698726792449912
+    },
+    {
+      "target": "MaxT_TB_Top",
+      "pred_col": "MaxT_TB_Top_pred",
+      "n": 35,
+      "mae": 0.7569257825139241,
+      "median_ae": 0.6550178616192852,
+      "p90_ae": 1.4326057190319859,
+      "rmse": 0.9512128412831908,
+      "r2": 0.971614310312004
+    },
+    {
+      "target": "MaxT_TB_Btm",
+      "pred_col": "MaxT_TB_Btm_pred",
+      "n": 35,
+      "mae": 0.8036419426561322,
+      "median_ae": 0.6972599459593027,
+      "p90_ae": 1.5407114259119767,
+      "rmse": 1.0468295447106002,
+      "r2": 0.9769470541589838
+    },
+    {
+      "target": "MaxT_Adj_Y",
+      "pred_col": "MaxT_Adj_Y_pred",
+      "n": 35,
+      "mae": 0.08317613954086601,
+      "median_ae": 0.10433170695565089,
+      "p90_ae": 0.1859749775394974,
+      "rmse": 0.11207031080280207,
+      "r2": 0.4878517488541534
+    },
+    {
+      "target": "MaxT_Adj_Z",
+      "pred_col": "MaxT_Adj_Z_pred",
+      "n": 35,
+      "mae": 0.0011580409499808522,
+      "median_ae": 0.0006095768520423955,
+      "p90_ae": 0.002254651178300227,
+      "rmse": 0.002127213662701648,
+      "r2": 0.8993031486138789
+    },
+    {
+      "target": "Max_Power",
+      "pred_col": "Max_Power_pred",
+      "n": 35,
+      "mae": 9.353174323592222,
+      "median_ae": 5.067663102232473,
+      "p90_ae": 25.90177102643221,
+      "rmse": 16.040902277185083,
+      "r2": 0.9934851547716612
+    },
+    {
+      "target": "Time_Max_Power",
+      "pred_col": "Time_Max_Power_pred",
+      "n": 35,
+      "mae": 12.46465175883311,
+      "median_ae": 10.946714492236623,
+      "p90_ae": 23.05499287144468,
+      "rmse": 15.428418026660466,
+      "r2": 0.3348797425965522
+    },
+    {
+      "target": "Time_MaxT",
+      "pred_col": "Time_MaxT_pred",
+      "n": 35,
+      "mae": 2.517085311487344,
+      "median_ae": 2.0265446518714043,
+      "p90_ae": 5.1332947578274,
+      "rmse": 3.4357846521972144,
+      "r2": 0.9911517399224132
+    }
+  ]
+}

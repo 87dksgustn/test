@@ -28,7 +28,8 @@ TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
-OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power", "Time_MaxT"]
+# Include both Time_MaxT and Time_Max_Power as independent learned targets.
+OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power", "Time_MaxT", "Time_Max_Power"]
 TIME_FEATURE_COLS = []
 
 # Extra outputs policy flags

@@ -44,6 +44,7 @@
   "holdout_fp": 2,
   "holdout_tmax_rmse": 1.4966012069223875,
   "holdout_tmax_r2": 0.9987037680208769,
+  "holdout_tmax_mape": 0.29624842463890577,
   "holdout_tmax_n": 41,
   "boundary_count": 13,
   "notp_high_tmax_count": 4,
@@ -53,7 +54,7 @@
   "n_unique_combos_selected": 2,
   "uncertainty_metric_source": "clf_uncertainty_scaled",
   "uncertainty_high_threshold": 0.7,
-  "uncertainty_mean": 0.6351530366214669,
-  "uncertainty_p90": 0.8169310959105094,
-  "uncertainty_high_ratio": 0.5714285714285714
+  "uncertainty_mean": 0.6291279728204229,
+  "uncertainty_p90": 0.8890322681348446,
+  "uncertainty_high_ratio": 0.47619047619047616
 }

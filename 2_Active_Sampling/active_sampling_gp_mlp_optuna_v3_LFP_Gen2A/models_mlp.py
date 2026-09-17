@@ -21,7 +21,7 @@ class TargetScaler:
 
 if TORCH_AVAILABLE:
     class MultiHeadMLP(nn.Module):
-        def __init__(self, input_dim, hidden_dims, dropout=0.1, n_extra_outputs=0):
+        def __init__(self, input_dim, hidden_dims, dropout=0.1, extra_cols=None):
             super().__init__()
             layers = []
             prev = input_dim
@@ -31,12 +31,15 @@ if TORCH_AVAILABLE:
             self.trunk = nn.Sequential(*layers)
             self.class_head = nn.Linear(prev, 2)
             self.tmax_head = nn.Linear(prev, 1)
-            self.extra_head = nn.Linear(prev, n_extra_outputs) if n_extra_outputs > 0 else None
+            self.extra_cols = list(extra_cols or [])
+            self.extra_heads = nn.ModuleDict({
+                col: nn.Linear(prev, 1) for col in self.extra_cols
+            })
         def forward(self, x):
             z = self.trunk(x)
             logits = self.class_head(z)
             tmax = self.tmax_head(z).squeeze(-1)
-            extra = self.extra_head(z) if self.extra_head is not None else None
+            extra = {col: head(z).squeeze(-1) for col, head in self.extra_heads.items()} if self.extra_heads else None
             return logits, tmax, extra
 else:
     class MultiHeadMLP: pass
@@ -76,9 +79,18 @@ def _tmax_scaler(y_tmax, y_class, pass_label):
     return TargetScaler(mean, std if std > 1e-12 else 1.0)
 
 def _extra_scaler(y_extra):
-    if y_extra is None or y_extra.shape[1] == 0: return None
-    mean = np.nanmean(y_extra, axis=0); std = np.nanstd(y_extra, axis=0)
-    std = np.where(std < 1e-12, 1.0, std)
+    if y_extra is None or y_extra.size == 0:
+        return None
+    if y_extra.ndim == 1:
+        y_extra = y_extra.reshape(-1, 1)
+    finite = np.isfinite(y_extra)
+    if not finite.any():
+        return None
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean = np.nanmean(y_extra, axis=0)
+        std = np.nanstd(y_extra, axis=0)
+    mean = np.where(np.isfinite(mean), mean, 0.0)
+    std = np.where(np.isfinite(std) & (std >= 1e-12), std, 1.0)
     return {"mean": mean, "std": std}
 
 def _class_weights(y_class):
@@ -113,7 +125,7 @@ def _bootstrap_indices(y_class, seed, stratified=True, sample_ratio=1.0):
     rng.shuffle(out)
     return out
 
-def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None, max_epochs=None):
+def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=None, max_epochs=None, extra_cols=None):
     _check_torch(); torch.manual_seed(seed); np.random.seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     max_epochs = max_epochs or int(_cfg(config, params, "MLP_MAX_EPOCHS"))
@@ -125,6 +137,7 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
     valid_fraction = config.MLP_VALID_FRACTION
     tsc = _tmax_scaler(y_tmax, y_class, config.PASS_LABEL)
     yt = tsc.transform(np.asarray(y_tmax, dtype=float))
+    extra_cols = list(extra_cols or [])
     esc = _extra_scaler(y_extra)
     ye = None if y_extra is None or esc is None else (y_extra - esc["mean"]) / esc["std"]
     n_extra = 0 if ye is None else ye.shape[1]
@@ -140,7 +153,7 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
         ds = TensorDataset(xtr, ytr, ttr, ptr)
     loader = DataLoader(ds, batch_size=config.MLP_BATCH_SIZE, shuffle=True)
     xva = ten(x_train[va]).to(device); yva = torch.tensor(y_class[va], dtype=torch.long).to(device); tva = ten(yt[va]).to(device); pva = torch.tensor(y_class[va] == config.PASS_LABEL, dtype=torch.bool).to(device)
-    model = MultiHeadMLP(x_train.shape[1], hidden_dims, dropout, n_extra).to(device)
+    model = MultiHeadMLP(x_train.shape[1], hidden_dims, dropout, extra_cols=extra_cols[:n_extra]).to(device)
     weights = torch.tensor(_class_weights(y_class), dtype=torch.float32).to(device) if config.MLP_USE_CLASS_WEIGHT else None
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     best_state = None; best = float("inf"); wait = 0
@@ -153,7 +166,16 @@ def train_single_mlp(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
             logits, tp, ep = model(xb)
             loss = config.MLP_CLASSIFICATION_LOSS_WEIGHT * F.cross_entropy(logits, yb, weight=weights)
             if pb.any(): loss = loss + tmax_loss_weight * F.mse_loss(tp[pb], tb[pb])
-            if ep is not None and emb is not None and emb.any(): loss = loss + config.MLP_OTHER_REGRESSION_LOSS_WEIGHT * torch.mean(((ep - eb)[emb]) ** 2)
+            if ep is not None and emb is not None and emb.any() and n_extra > 0:
+                extra_losses = []
+                for i, col in enumerate(extra_cols[:n_extra]):
+                    if col not in ep:
+                        continue
+                    col_mask = emb[:, i]
+                    if col_mask.any():
+                        extra_losses.append(F.mse_loss(ep[col][col_mask], eb[:, i][col_mask]))
+                if extra_losses:
+                    loss = loss + config.MLP_OTHER_REGRESSION_LOSS_WEIGHT * torch.stack(extra_losses).mean()
             opt.zero_grad(); loss.backward(); opt.step()
         model.eval()
         with torch.no_grad():
@@ -184,16 +206,17 @@ def fit_mlp_ensemble(x_train, y_class, y_tmax, y_extra, config, seed=42, params=
             yb = y_class[idx]
             tb = y_tmax[idx]
             eb = None if y_extra is None else y_extra[idx]
-            model, tsc, esc, device = train_single_mlp(xb, yb, tb, eb, config, member_seed, params=params)
+            model, tsc, esc, device = train_single_mlp(xb, yb, tb, eb, config, member_seed, params=params, extra_cols=extra_cols)
         else:
-            model, tsc, esc, device = train_single_mlp(x_train, y_class, y_tmax, y_extra, config, member_seed, params=params)
+            model, tsc, esc, device = train_single_mlp(x_train, y_class, y_tmax, y_extra, config, member_seed, params=params, extra_cols=extra_cols)
         models.append(model)
     return MLPEnsemble(models, tsc, esc, device, params=params, extra_cols=extra_cols)
 
 def predict_mlp_ensemble(bundle, x):
     _check_torch(); device = bundle.device
     xt = torch.tensor(x, dtype=torch.float32).to(device)
-    ps = []; ts = []; es = []
+    ps = []; ts = []
+    es = {col: [] for col in bundle.extra_cols}
     for model in bundle.models:
         model.eval()
         with torch.no_grad():
@@ -201,9 +224,10 @@ def predict_mlp_ensemble(bundle, x):
             prob = torch.softmax(logits, dim=1).detach().cpu().numpy()
             ps.append(prob[:,1])
             ts.append(bundle.tmax_scaler.inverse_transform(tscaled.detach().cpu().numpy()))
-            # Collect extra outputs if available
             if extra_out is not None:
-                es.append(extra_out.detach().cpu().numpy())
+                for col in bundle.extra_cols:
+                    if col in extra_out:
+                        es[col].append(extra_out[col].detach().cpu().numpy())
     p = np.vstack(ps); t = np.vstack(ts)
     result = {
         "p_tp": p.mean(axis=0),
@@ -213,16 +237,26 @@ def predict_mlp_ensemble(bundle, x):
         "tmax_std": t.std(axis=0),
     }
     # Add extra outputs if available
-    if es and bundle.extra_scaler is not None:
-        e = np.stack(es, axis=0)  # (n_models, n_samples, n_extra)
-        e_mean = e.mean(axis=0)   # (n_samples, n_extra)
-        e_std = e.std(axis=0)
-        # Inverse transform: y = scaled * std + mean
-        e_mean_inv = e_mean * bundle.extra_scaler["std"] + bundle.extra_scaler["mean"]
-        e_std_inv = e_std * bundle.extra_scaler["std"]  # Scale std by same factor
-        result["extra_pred"] = e_mean_inv  # (n_samples, n_extra)
-        result["extra_std"] = e_std_inv
-        result["extra_cols"] = bundle.extra_cols
+    if bundle.extra_cols and bundle.extra_scaler is not None:
+        pred_cols = []
+        std_cols = []
+        for i, col in enumerate(bundle.extra_cols):
+            col_samples = es.get(col, [])
+            if col_samples:
+                col_stack = np.vstack(col_samples)  # (n_models, n_samples)
+                col_mean = col_stack.mean(axis=0)
+                col_std = col_stack.std(axis=0)
+            else:
+                col_mean = np.zeros(x.shape[0], dtype=float)
+                col_std = np.zeros(x.shape[0], dtype=float)
+            scale = float(bundle.extra_scaler["std"][i])
+            mean = float(bundle.extra_scaler["mean"][i])
+            pred_cols.append(col_mean * scale + mean)
+            std_cols.append(col_std * scale)
+        if pred_cols:
+            result["extra_pred"] = np.column_stack(pred_cols)
+            result["extra_std"] = np.column_stack(std_cols)
+            result["extra_cols"] = bundle.extra_cols
     return result
 
 def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1, n_splits=5, weights=None, std_penalty=0.5, params=None, extra_cols=None):
@@ -237,7 +271,17 @@ def evaluate_mlp_cv(x_transformed, y_class, y_tmax, y_extra, config, tp_label=1,
     extra_fold_metrics = {col: [] for col in extra_cols}
     
     for fold, (tr, va) in enumerate(cv.split(x_transformed, y_class)):
-        model, tsc, esc, device = train_single_mlp(x_transformed[tr], y_class[tr], y_tmax[tr], None if y_extra is None else y_extra[tr], config, seed=config.RANDOM_SEED + fold*101, params=params, max_epochs=config.MLP_CV_MAX_EPOCHS)
+        model, tsc, esc, device = train_single_mlp(
+            x_transformed[tr],
+            y_class[tr],
+            y_tmax[tr],
+            None if y_extra is None else y_extra[tr],
+            config,
+            seed=config.RANDOM_SEED + fold*101,
+            params=params,
+            max_epochs=config.MLP_CV_MAX_EPOCHS,
+            extra_cols=extra_cols,
+        )
         bundle = MLPEnsemble([model], tsc, esc, device, params=params, extra_cols=extra_cols)
         pred = predict_mlp_ensemble(bundle, x_transformed[va])
         ypred = (pred["p_tp"] >= 0.5).astype(int)

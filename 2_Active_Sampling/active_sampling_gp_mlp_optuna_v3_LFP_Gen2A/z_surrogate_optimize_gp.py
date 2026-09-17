@@ -15,7 +15,7 @@ from data_loader import load_labeled_data, validate_passfail_labels, validate_re
 from discrete_space import attach_discrete_combo_id, generate_valid_discrete_combinations
 from models_gp import fit_gp_models
 from optuna_tuning import maybe_tune_models
-from preprocessing import build_preprocessor, make_extra_targets, make_xy
+from preprocessing import build_preprocessor, make_extra_targets, make_xy, resolve_extra_target_cols
 
 try:
     import optuna
@@ -114,14 +114,19 @@ def load_training_data(cfg):
     df = load_labeled_data(cfg.INPUT_CSV)
     # Add interaction terms before validation
     df = add_interaction_terms(df, getattr(cfg, "INTERACTION_TERMS", []))
+    active_extra_cols = resolve_extra_target_cols(
+        cfg.OTHER_REGRESSION_COLS,
+        cfg.TIME_FEATURE_COLS,
+        getattr(cfg, "TIME_TARGET_ENABLE", None),
+    )
     validate_required_columns(
         df,
         cfg.CONTINUOUS_COLS,
         cfg.DISCRETE_COLS,
         cfg.TPNoTP_COL,
         cfg.TMAX_COL,
-        cfg.OTHER_REGRESSION_COLS,
-        cfg.TIME_FEATURE_COLS,
+        active_extra_cols,
+        [],
     )
     validate_passfail_labels(df, cfg.TPNoTP_COL, cfg.PASS_LABEL, cfg.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(cfg.DISCRETE_LEVELS, cfg.DISCRETE_COLS, cfg.S_PREFIX)
@@ -131,7 +136,12 @@ def load_training_data(cfg):
 
 def fit_surrogate_models(df, cfg):
     x_raw, y_class, y_tmax = make_xy(df, cfg.CONTINUOUS_COLS, cfg.DISCRETE_COLS, cfg.TPNoTP_COL, cfg.TMAX_COL)
-    y_extra, _ = make_extra_targets(df, cfg.OTHER_REGRESSION_COLS, cfg.TIME_FEATURE_COLS)
+    y_extra, _ = make_extra_targets(
+        df,
+        cfg.OTHER_REGRESSION_COLS,
+        cfg.TIME_FEATURE_COLS,
+        target_enable_map=getattr(cfg, "TIME_TARGET_ENABLE", None),
+    )
     pre = build_preprocessor(cfg.CONTINUOUS_COLS, cfg.DISCRETE_COLS)
     x_train = pre.fit_transform(x_raw)
     nn_model = NearestNeighbors(n_neighbors=1).fit(x_train)

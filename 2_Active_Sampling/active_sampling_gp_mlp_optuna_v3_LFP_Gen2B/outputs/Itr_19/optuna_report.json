@@ -19,17 +19,16 @@
     "use_ard_in_optuna": false
   },
   "mlp": {
-    "best_value": 0.8107690187149631,
+    "best_value": 0.80582884961038,
     "n_trials": 20,
     "best_params": {
-      "n_layers": 3,
+      "n_layers": 2,
       "width": 256,
-      "dropout": 0.0010699345450031587,
-      "learning_rate": 0.00042088921906833024,
-      "weight_decay": 0.0003475268550073198,
-      "tmax_loss_weight": 0.733796488382908,
+      "dropout": 0.022365193103931248,
+      "learning_rate": 0.002869139536545374,
+      "weight_decay": 0.00020736445177905034,
+      "tmax_loss_weight": 0.35897254522733796,
       "hidden_dims": [
-        256,
         256,
         256
       ]

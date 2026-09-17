@@ -226,12 +226,32 @@ def fit_gp_models(
         )
     # Fit extra GP regressors (NoTP only, same as Tmax)
     reg_extra = {}
+    active_extra_cols = list(extra_cols or [])
     if y_extra is not None and extra_cols is not None and len(extra_cols) > 0:
+        y_extra_arr = np.asarray(y_extra, dtype=float)
+        if y_extra_arr.ndim != 2:
+            y_extra_arr = None
+        n_targets = min(len(extra_cols), y_extra_arr.shape[1]) if y_extra_arr is not None else 0
+        if n_targets <= 0:
+            y_extra_arr = None
+        elif n_targets != len(extra_cols):
+            print(
+                f"[WARN] GP extra target dim mismatch (requested={len(extra_cols)}, y_extra={y_extra_arr.shape[1]}). "
+                f"Using first {n_targets} targets."
+            )
+            active_extra_cols = list(extra_cols[:n_targets])
+        else:
+            active_extra_cols = list(extra_cols)
+
+    if y_extra is not None and active_extra_cols:
         mask = y_class == pass_label
         if int(mask.sum()) >= 8:  # min_pass_samples
             x_notp = x_train[mask]
-            for i, col in enumerate(extra_cols):
-                y_col = y_extra[mask, i]
+            for i, col in enumerate(active_extra_cols):
+                y_col = np.asarray(y_extra_arr[mask, i], dtype=float)
+                valid = np.isfinite(y_col)
+                if int(valid.sum()) < 2:
+                    continue
                 n_features = x_train.shape[1] if use_ard else None
                 gpr = GaussianProcessRegressor(
                     kernel=build_tmax_kernel(tmax_params or {}, n_features=n_features),
@@ -242,7 +262,7 @@ def fit_gp_models(
                 )
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=ConvergenceWarning)
-                    gpr.fit(x_notp, y_col)
+                    gpr.fit(x_notp[valid], y_col[valid])
                 reg_extra[col] = gpr
     return GPModels(
         clf=clf,
@@ -252,5 +272,5 @@ def fit_gp_models(
         tmax_params=tmax_params,
         clf_ensemble=clf_ensemble,
         reg_extra=reg_extra,
-        extra_cols=extra_cols or [],
+        extra_cols=active_extra_cols,
     )

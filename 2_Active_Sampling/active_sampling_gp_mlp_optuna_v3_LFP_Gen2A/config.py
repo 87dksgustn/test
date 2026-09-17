@@ -5,7 +5,7 @@
 # ============================================================
 
 INPUT_CSV = "Itr_12_Dataset.csv"
-FINAL_TEST_CSV = "z_Final_Dataset.csv"
+FINAL_TEST_CSV = "z_Final_Test_Dataset.csv"
 
 # Base continuous columns (original features)
 BASE_CONTINUOUS_COLS = ["A_Cell_D", "C_Barrier_Thx", "E_Barrier_Outer_Thx", "F_ThermalResin_Thx"]
@@ -27,9 +27,16 @@ TPNoTP_COL = PASSFAIL_COL
 TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
-# These are trained/evaluated on NoTP rows only, same as TMAX_COL.
+# OTHER_REGRESSION_COLS are always included when listed.
 OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power"]
-TIME_FEATURE_COLS = []
+
+# Time targets are selected individually by TIME_TARGET_ENABLE.
+# When both are True, both are trained as separate targets.
+TIME_FEATURE_COLS = ["Time_MaxT", "Time_Max_Power"]
+TIME_TARGET_ENABLE = {
+    "Time_MaxT": True,
+    "Time_Max_Power": True,
+}
 
 # Extra outputs policy flags
 EXTRA_OUTPUTS_USE_NOTP_ONLY = True   # Train/evaluate on NoTP rows only

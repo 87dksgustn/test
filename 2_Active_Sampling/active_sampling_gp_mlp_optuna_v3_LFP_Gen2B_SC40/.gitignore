@@ -1,0 +1,25 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / build artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs and local runtime outputs
+*.log
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

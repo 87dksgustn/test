@@ -17,7 +17,7 @@ import config
 from data_loader import load_labeled_data, validate_required_columns, validate_passfail_labels
 from discrete_space import generate_valid_discrete_combinations, attach_discrete_combo_id
 from candidate_generator import generate_candidate_pool, filter_near_existing_data
-from preprocessing import build_preprocessor, make_xy, make_extra_targets
+from preprocessing import build_preprocessor, make_xy, make_extra_targets, resolve_extra_target_cols
 from diagnostics import combo_diagnostics
 from optuna_tuning import maybe_tune_models
 from model_selector import select_and_fit_model
@@ -907,8 +907,15 @@ def save_model_compare_cv_barplot(selection_report, output_png):
     plt.close(fig)
     return True
 
+def _ensure_parent_dir_for_plot(output_png):
+    output_path = Path(output_png)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return output_path
+
+
 def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg, source_label="Holdout"):
     from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+    output_path = _ensure_parent_dir_for_plot(output_png)
     cm = confusion_matrix(y_true, y_pred, labels=[cfg.NOTP_LABEL, cfg.TP_LABEL])
     acc = accuracy_score(y_true, y_pred)
     prec = precision_score(y_true, y_pred, pos_label=cfg.TP_LABEL, zero_division=0)
@@ -934,13 +941,14 @@ def save_holdout_confusion_matrix(y_true, y_pred, output_png, cfg, source_label=
     fig.text(0.5, 0.02, metrics_text, ha="center", fontsize=11, color="#374151")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
-    fig.savefig(output_png, dpi=180)
+    fig.savefig(output_path, dpi=180)
     plt.close(fig)
     return {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
 
 def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png, source_label="Holdout"):
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    output_path = _ensure_parent_dir_for_plot(output_png)
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     mask = np.isfinite(y_true) & np.isfinite(y_pred)
@@ -967,12 +975,22 @@ def save_holdout_tmax_actual_vs_pred(y_true, y_pred, output_png, source_label="H
     ax.legend(loc="upper left", frameon=True)
     ax.grid(True, alpha=0.3)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
-    fig.savefig(output_png, dpi=180)
+    fig.savefig(output_path, dpi=180)
     plt.close(fig)
     return {"mae": mae, "rmse": rmse, "r2": r2, "n": len(yt)}
 
 
-def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, output_dir, source_label="Holdout", output_name="extra_outputs_actual_vs_pred_holdout.png"):
+def save_holdout_extra_outputs_plots(
+    y_extra_true,
+    y_extra_pred,
+    extra_cols,
+    output_dir,
+    source_label="Holdout",
+    output_name="extra_outputs_actual_vs_pred_holdout.png",
+    tmax_true=None,
+    tmax_pred=None,
+    include_tmax_panel=False,
+):
     """Save actual vs predicted plots for extra regression outputs.
     
     Args:
@@ -988,19 +1006,31 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
     """
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     if y_extra_true is None or y_extra_pred is None or len(extra_cols) == 0:
         return {}
     
     y_extra_true = np.asarray(y_extra_true, dtype=float)
     y_extra_pred = np.asarray(y_extra_pred, dtype=float)
     
-    if y_extra_true.shape != y_extra_pred.shape:
+    if y_extra_true.ndim != 2 or y_extra_pred.ndim != 2:
         return {}
+
+    n_targets = min(len(extra_cols), y_extra_true.shape[1], y_extra_pred.shape[1])
+    if n_targets <= 0:
+        return {}
+    if n_targets != len(extra_cols):
+        print(
+            f"[WARN] Extra output dim mismatch (requested={len(extra_cols)}, true={y_extra_true.shape[1]}, pred={y_extra_pred.shape[1]}). "
+            f"Using first {n_targets} targets."
+        )
+    active_extra_cols = list(extra_cols[:n_targets])
     
     all_metrics = {}
-    colors = ["#4C78A8", "#F58518", "#54A24B"]  # Blue, Orange, Green
+    colors = ["#4C78A8", "#F58518", "#54A24B", "#72B7B2"]
     
-    for i, col in enumerate(extra_cols):
+    for i, col in enumerate(active_extra_cols):
         yt = y_extra_true[:, i]
         yp = y_extra_pred[:, i]
         
@@ -1022,39 +1052,71 @@ def save_holdout_extra_outputs_plots(y_extra_true, y_extra_pred, extra_cols, out
         # Individual metric values are kept for logging/reporting,
         # while plotting is consolidated into a single multi-panel figure below.
     
-    # Create combined 3-panel plot if all three outputs exist
-    if len(extra_cols) >= 3:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=150)
-        for i, col in enumerate(extra_cols[:3]):
+    panel_series = []
+    if include_tmax_panel and tmax_true is not None and tmax_pred is not None:
+        panel_series.append(("MaxT_TB", np.asarray(tmax_true, dtype=float), np.asarray(tmax_pred, dtype=float), colors[0]))
+
+    for i, col in enumerate(active_extra_cols):
+        panel_series.append((col, y_extra_true[:, i], y_extra_pred[:, i], colors[(i + 1) % len(colors)]))
+
+    if panel_series:
+        if include_tmax_panel:
+            panel_count = min(4, len(panel_series))
+            rows, cols_grid = 2, 2
+            fig, axes = plt.subplots(rows, cols_grid, figsize=(12, 10), dpi=150)
+            axes = axes.ravel()
+        else:
+            panel_count = min(3, len(panel_series))
+            rows, cols_grid = 1, panel_count
+            fig, axes = plt.subplots(rows, cols_grid, figsize=(6 * panel_count, 5), dpi=150)
+            axes = np.atleast_1d(axes)
+
+        for i in range(panel_count):
             ax = axes[i]
-            yt = y_extra_true[:, i]
-            yp = y_extra_pred[:, i]
+            col, yt, yp, color = panel_series[i]
             mask = np.isfinite(yt) & np.isfinite(yp)
             yt_valid = yt[mask]
             yp_valid = yp[mask]
-            
+
             if len(yt_valid) == 0:
                 ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
                 ax.set_title(col, fontsize=12, fontweight="bold")
                 continue
-            
-            ax.scatter(yt_valid, yp_valid, s=40, alpha=0.7, edgecolors="black", linewidths=0.3, c=colors[i])
+
+            ax.scatter(yt_valid, yp_valid, s=40, alpha=0.7, edgecolors="black", linewidths=0.3, c=color)
             data_range = max(yt_valid.max() - yt_valid.min(), yp_valid.max() - yp_valid.min())
             margin = max(data_range * 0.05, 0.001)
             lims = [min(yt_valid.min(), yp_valid.min()) - margin, max(yt_valid.max(), yp_valid.max()) + margin]
             ax.plot(lims, lims, "--", color="#E45756", linewidth=1.2)
             ax.set_xlim(lims)
             ax.set_ylim(lims)
-            ax.set_xlabel(f"Actual", fontsize=11)
-            ax.set_ylabel(f"Predicted", fontsize=11)
-            
-            m = all_metrics.get(col, {})
-            r2_val = m.get("r2", np.nan)
-            rmse_val = m.get("rmse", np.nan)
-            ax.set_title(f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.4f}" if abs(rmse_val) < 10 else f"{col}\nR²={r2_val:.3f}, RMSE={rmse_val:.2f}", fontsize=12, fontweight="bold")
+            ax.set_xlabel("Actual", fontsize=11)
+            ax.set_ylabel("Predicted", fontsize=11)
+
+            if col == "MaxT_TB":
+                from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+                mae = mean_absolute_error(yt_valid, yp_valid)
+                rmse = np.sqrt(mean_squared_error(yt_valid, yp_valid))
+                r2_val = r2_score(yt_valid, yp_valid) if len(yt_valid) > 1 else np.nan
+                ttl = f"{col}\\nR²={r2_val:.3f}, MAE={mae:.2f}, RMSE={rmse:.2f}"
+            else:
+                m = all_metrics.get(col, {})
+                r2_val = m.get("r2", np.nan)
+                mae_val = m.get("mae", np.nan)
+                rmse_val = m.get("rmse", np.nan)
+                if np.isfinite(rmse_val) and abs(rmse_val) < 10:
+                    ttl = f"{col}\\nR²={r2_val:.3f}, MAE={mae_val:.4f}, RMSE={rmse_val:.4f}"
+                else:
+                    ttl = f"{col}\\nR²={r2_val:.3f}, MAE={mae_val:.2f}, RMSE={rmse_val:.2f}"
+            ax.set_title(ttl, fontsize=12, fontweight="bold")
             ax.grid(True, alpha=0.3)
-        
-        fig.suptitle(f"Extra Outputs: Actual vs Predicted ({source_label}, NoTP only)", fontsize=14, fontweight="bold", y=1.02)
+
+        for i in range(panel_count, len(axes)):
+            axes[i].axis("off")
+
+        title_suffix = "NoTP only"
+        fig.suptitle(f"Extra Outputs: Actual vs Predicted ({source_label}, {title_suffix})", fontsize=14, fontweight="bold", y=1.02)
         fig.tight_layout()
         combined_png = output_dir / output_name
         fig.savefig(combined_png, dpi=180, bbox_inches="tight")
@@ -1939,7 +2001,12 @@ def main():
         dropped = int(unlabeled_mask.sum())
         df = df.loc[~unlabeled_mask].copy().reset_index(drop=True)
         print(f"[INFO] Dropped {dropped} unlabeled rows from {config.INPUT_CSV} before model fitting.")
-    validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
+    active_extra_cols = resolve_extra_target_cols(
+        config.OTHER_REGRESSION_COLS,
+        config.TIME_FEATURE_COLS,
+        getattr(config, "TIME_TARGET_ENABLE", None),
+    )
+    validate_required_columns(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, active_extra_cols, [])
     validate_passfail_labels(df, config.TPNoTP_COL, config.PASS_LABEL, config.FAIL_LABEL)
     valid_combos = generate_valid_discrete_combinations(config.DISCRETE_LEVELS, config.DISCRETE_COLS, config.S_PREFIX)
     print(f"[INFO] Valid discrete combinations: {len(valid_combos)}")
@@ -1947,7 +2014,12 @@ def main():
     diag = combo_diagnostics(df, valid_combos, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL, config.PASS_LABEL, config.FAIL_LABEL)
     diag.to_csv(output_diagnostics_csv, index=False, encoding="utf-8-sig")
     x_raw, y_class, y_tmax = make_xy(df, config.CONTINUOUS_COLS, config.DISCRETE_COLS, config.TPNoTP_COL, config.TMAX_COL)
-    y_extra, extra_cols = make_extra_targets(df, config.OTHER_REGRESSION_COLS, config.TIME_FEATURE_COLS)
+    y_extra, extra_cols = make_extra_targets(
+        df,
+        config.OTHER_REGRESSION_COLS,
+        config.TIME_FEATURE_COLS,
+        target_enable_map=getattr(config, "TIME_TARGET_ENABLE", None),
+    )
     pre = build_preprocessor(config.CONTINUOUS_COLS, config.DISCRETE_COLS)
     x_train = pre.fit_transform(x_raw)
     tuned = maybe_tune_models(df, x_train, y_class, y_tmax, y_extra, config)
@@ -2160,6 +2232,11 @@ def main():
     holdout_tmax_png = performance_dir / "tmax_actual_vs_pred_holdout.png"
 
     final_test_csv = getattr(config, "FINAL_TEST_CSV", None)
+    if not final_test_csv or not Path(final_test_csv).exists():
+        fallback_final_test_csv = Path("z_Final_Test_Dataset.csv")
+        if fallback_final_test_csv.exists():
+            final_test_csv = str(fallback_final_test_csv)
+            print(f"[INFO] FINAL_TEST_CSV fallback applied: {final_test_csv}")
     enable_holdout_eval = bool(getattr(config, "ENABLE_HOLDOUT_EVAL", True))
     cm_metrics = None
     tmax_metrics = None
@@ -2306,7 +2383,11 @@ def main():
                     save_cv_vs_holdout_comparison_plot(cv_metrics_for_plot, holdout_full_metrics, cv_holdout_png, title_prefix=model_name)
                 
                 # === Extra Outputs Plots ===
-                extra_cols = config.OTHER_REGRESSION_COLS
+                extra_cols = resolve_extra_target_cols(
+                    config.OTHER_REGRESSION_COLS,
+                    config.TIME_FEATURE_COLS,
+                    getattr(config, "TIME_TARGET_ENABLE", None),
+                )
                 if extra_cols and len(extra_cols) > 0:
                     # Get actual extra values from holdout data
                     y_extra_holdout, _ = make_extra_targets(holdout_df, extra_cols, [])
@@ -2320,6 +2401,9 @@ def main():
                             y_extra_pred_notp,
                             extra_cols,
                             performance_dir,
+                            tmax_true=y_holdout_tmax[notp_mask],
+                            tmax_pred=np.asarray(holdout_pred["tmax_pred"], dtype=float)[notp_mask],
+                            include_tmax_panel=True,
                         )
                         print(f"[INFO] Extra outputs holdout metrics: {extra_metrics}")
                     else:
@@ -2387,6 +2471,9 @@ def main():
                     performance_dir,
                     source_label="CV (OOF)",
                     output_name="extra_outputs_actual_vs_pred_cv.png",
+                    tmax_true=np.asarray(y_tmax)[notp_mask_cv],
+                    tmax_pred=np.asarray(oof["oof_tmax"])[notp_mask_cv],
+                    include_tmax_panel=True,
                 )
                 print(f"[INFO] Extra outputs CV metrics: {extra_metrics}")
 

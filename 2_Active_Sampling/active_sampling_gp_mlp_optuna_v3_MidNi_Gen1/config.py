@@ -37,7 +37,7 @@ TMAX_OUTPUT_LABEL = "MaxT_Adj"     # Display label used in outputs/reports
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
-OTHER_REGRESSION_COLS = ["MaxT_TB_Top", "MaxT_TB_Btm", "MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power"]
+OTHER_REGRESSION_COLS = ["MaxT_TB_Top", "MaxT_TB_Btm", "MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power", "Time_Max_Power"]
 TIME_FEATURE_COLS = ["Time_MaxT"]
 
 # Extra outputs policy flags

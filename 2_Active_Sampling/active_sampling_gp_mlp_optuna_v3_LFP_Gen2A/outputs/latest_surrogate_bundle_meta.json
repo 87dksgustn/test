@@ -1,6 +1,6 @@
 {
   "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2A\\outputs\\latest_surrogate_bundle.pkl",
-  "created_at": "2026-09-10T10:39:49",
+  "created_at": "2026-09-15T17:34:04",
   "config": {
     "base_continuous_cols": [
       "A_Cell_D",
@@ -72,7 +72,10 @@
       "MaxT_Adj_Z",
       "Max_Power"
     ],
-    "time_feature_cols": [],
+    "time_feature_cols": [
+      "Time_MaxT",
+      "Time_Max_Power"
+    ],
     "tp_label": 1,
     "notp_label": 0,
     "pass_label": 0,
@@ -83,6 +86,6 @@
   "metadata": {
     "selected_model": "hybrid",
     "input_csv": "Itr_12_Dataset.csv",
-    "try_dir": "outputs\\Try_1"
+    "try_dir": "outputs\\Try_5"
   }
 }

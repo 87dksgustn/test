@@ -1,0 +1,10 @@
+{
+  "evaluation": "Final test NoTP only (Itr_15_Holdout model)",
+  "n_samples": 35,
+  "tmax_target_col": "MaxT_TB_Center",
+  "mae": 0.6780659740624994,
+  "median_ae": 0.40223207890514345,
+  "p90_ae": 1.6183288621529301,
+  "rmse": 0.9654072413816474,
+  "r2": 0.9698726792449912
+}

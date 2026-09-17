@@ -82,18 +82,25 @@ def evaluate_gp_cv_with_extra(x_transformed, y_class, y_tmax, y_extra, pass_labe
             for i, col in enumerate(extra_cols):
                 try:
                     # Fit GP regressor for this extra output on NoTP samples
-                    y_col_tr = y_extra[tr, i]
-                    y_col_va = y_extra[va, i]
+                    y_col_tr = np.asarray(y_extra[tr, i], dtype=float)
+                    y_col_va = np.asarray(y_extra[va, i], dtype=float)
+                    tr_valid = pass_mask_tr & np.isfinite(y_col_tr)
+                    va_valid = pass_mask_va & np.isfinite(y_col_va)
+                    if int(tr_valid.sum()) < 2 or int(va_valid.sum()) < 1:
+                        extra_fold_metrics[col].append({
+                            "fold": fold, "rmse": np.nan, "mae": np.nan, "r2": np.nan, "n_samples": 0
+                        })
+                        continue
                     
                     # Create a simple GPR for extra output
                     from sklearn.gaussian_process import GaussianProcessRegressor
                     from sklearn.gaussian_process.kernels import Matern, ConstantKernel as C, WhiteKernel
                     kernel = C(1.0) * Matern(nu=2.5) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-10, 1e1))
                     gpr = GaussianProcessRegressor(kernel=kernel, alpha=1e-6, normalize_y=True, random_state=random_state + fold)
-                    gpr.fit(x_transformed[tr][pass_mask_tr], y_col_tr[pass_mask_tr])
+                    gpr.fit(x_transformed[tr][tr_valid], y_col_tr[tr_valid])
                     
-                    epred = gpr.predict(x_transformed[va][pass_mask_va])
-                    emetrics = regression_metrics(y_col_va[pass_mask_va], epred)
+                    epred = gpr.predict(x_transformed[va][va_valid])
+                    emetrics = regression_metrics(y_col_va[va_valid], epred)
                     extra_fold_metrics[col].append({
                         "fold": fold,
                         "rmse": emetrics.get("tmax_rmse", np.nan),
