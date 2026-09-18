@@ -94,7 +94,7 @@ bias_sampling_enabled = True
 # - 1.5~3.0: 보통 권장 범위
 bias_sampling_rules = {
     "Cell_D": {"direction": "high", "strength": 1.0},
-    "Barrier_Thx": {"direction": "target", "strength": 2.0, "target_value": 0.6},
+    "Barrier_Thx": {"direction": "target", "strength": 2.0, "target_value": 0.7},
     "Barrier_Outer_Thx": {"direction": "high", "strength": 1.5},
     "ThermalResin_Thx": {"direction": "high", "strength": 1.5},
 }
@@ -199,12 +199,16 @@ def apply_bias_to_unit_column(unit_col, direction, strength, target_unit=None):
         right_mask = ~left_mask
         transformed = np.empty_like(unit_col)
 
+        # strength가 커질수록 target 근처 밀도가 높아지도록 1/strength를 사용
         transformed[left_mask] = target_unit * np.power(
             2.0 * unit_col[left_mask],
-            strength_value
+            1.0 / strength_value
         )
         transformed[right_mask] = target_unit + (1.0 - target_unit) * (
-            1.0 - np.power(2.0 * (1.0 - unit_col[right_mask]), strength_value)
+            1.0 - np.power(
+                2.0 * (1.0 - unit_col[right_mask]),
+                1.0 / strength_value
+            )
         )
 
         return transformed

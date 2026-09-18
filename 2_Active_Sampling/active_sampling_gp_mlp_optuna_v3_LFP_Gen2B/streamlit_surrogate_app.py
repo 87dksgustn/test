@@ -18,7 +18,7 @@ import surrogate_bundle
 from surrogate_bundle import get_bundle_info, load_surrogate_bundle, predict_with_bundle
 
 
-ADMIN_PASSWORD = "Q!w2p0o9"
+ADMIN_PASSWORD = "safety"
 CHEMISTRY_OPTIONS = ["LFP Gen2B", "LFP Gen2A", "HV Mid-Ni Gen1"]
 CHEMISTRY_BUNDLE_TAG = {
     "LFP Gen2B": "LFP_Gen2B",
