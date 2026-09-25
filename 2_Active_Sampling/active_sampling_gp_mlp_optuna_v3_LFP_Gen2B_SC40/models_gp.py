@@ -63,7 +63,9 @@ def build_clf_kernel(params=None, n_features=None):
     
     # ARD mode: per-feature length scales (enables variable importance learning)
     if n_features is not None and n_features > 0:
-        length_scale = np.ones(n_features)  # Will be optimized per feature
+        # Warm-start: broadcast the tuned isotropic length_scale as the initial
+        # per-feature scales; L-BFGS refines them per feature during fit.
+        length_scale = np.full(n_features, float(params.get("length_scale", 1.0)))
     else:
         length_scale = float(params.get("length_scale", 1.0))  # Isotropic fallback
     
@@ -89,7 +91,8 @@ def build_tmax_kernel(params=None, n_features=None):
     
     # ARD mode
     if n_features is not None and n_features > 0:
-        length_scale = np.ones(n_features)
+        # Warm-start: broadcast the tuned isotropic length_scale (see build_clf_kernel).
+        length_scale = np.full(n_features, float(params.get("length_scale", 1.0)))
     else:
         length_scale = float(params.get("length_scale", 1.0))
     

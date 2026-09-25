@@ -61,7 +61,8 @@ def collect_cv_misclassified_points(df, x_train, y_class, config, gp_params=None
     splits = min(n_splits, int(class_counts.min())) if len(class_counts) > 1 else 0
     if splits < 2:
         return df.iloc[0:0].copy()
-    use_ard = bool(getattr(config, "GP_MODEL_SELECTION_USE_ARD", False))
+    # Match the deployed model: ARD with warm-start from tuned params (fast enough for OOF).
+    use_ard = bool(getattr(config, "GP_USE_ARD", True))
     seed = int(getattr(config, "RANDOM_SEED", 42))
     cv = StratifiedKFold(n_splits=splits, shuffle=True, random_state=seed)
     oof_pred = np.full(len(y), -1, dtype=int)
@@ -1019,6 +1020,7 @@ def save_holdout_extra_outputs_plots(
     tmax_true=None,
     tmax_pred=None,
     include_tmax_panel=False,
+    plot_targets=None,
 ):
     """Save actual vs predicted plots for extra regression outputs.
     
@@ -1083,24 +1085,42 @@ def save_holdout_extra_outputs_plots(
     if include_tmax_panel and tmax_true is not None and tmax_pred is not None:
         panel_series.append(("MaxT_TB", np.asarray(tmax_true, dtype=float), np.asarray(tmax_pred, dtype=float), colors[0]))
 
-    for i, col in enumerate(active_extra_cols):
-        panel_series.append((col, y_extra_true[:, i], y_extra_pred[:, i], colors[(i + 1) % len(colors)]))
+    plot_specs = []
+    if plot_targets:
+        alias_to_source = {
+            "MaxT_Adj": ["MaxT_Adj", "MaxT_Adj_Y"],
+            "Max_Power": ["Max_Power"],
+            "Time_MaxT": ["Time_MaxT"],
+            "Time_Max_Power": ["Time_Max_Power"],
+        }
+        source_to_idx = {name: idx for idx, name in enumerate(active_extra_cols)}
+        for display_name in plot_targets:
+            candidates = alias_to_source.get(display_name, [display_name])
+            src = next((cand for cand in candidates if cand in source_to_idx), None)
+            if src is None:
+                print(f"[WARN] Requested extra plot target '{display_name}' not found in available columns: {active_extra_cols}")
+                continue
+            plot_specs.append((display_name, src, source_to_idx[src]))
+    else:
+        plot_specs = [(col, col, i) for i, col in enumerate(active_extra_cols)]
+
+    for i, (display_col, metric_col, idx) in enumerate(plot_specs):
+        panel_series.append((display_col, metric_col, y_extra_true[:, idx], y_extra_pred[:, idx], colors[(i + 1) % len(colors)]))
 
     if panel_series:
-        if include_tmax_panel:
-            panel_count = min(4, len(panel_series))
-            rows, cols_grid = 2, 2
-            fig, axes = plt.subplots(rows, cols_grid, figsize=(12, 10), dpi=150)
-            axes = axes.ravel()
-        else:
-            panel_count = min(3, len(panel_series))
+        panel_count = min(4, len(panel_series))
+        if panel_count <= 2:
             rows, cols_grid = 1, panel_count
             fig, axes = plt.subplots(rows, cols_grid, figsize=(6 * panel_count, 5), dpi=150)
             axes = np.atleast_1d(axes)
+        else:
+            rows, cols_grid = 2, 2
+            fig, axes = plt.subplots(rows, cols_grid, figsize=(12, 10), dpi=150)
+            axes = axes.ravel()
 
         for i in range(panel_count):
             ax = axes[i]
-            col, yt, yp, color = panel_series[i]
+            col, metric_col, yt, yp, color = panel_series[i]
             mask = np.isfinite(yt) & np.isfinite(yp)
             yt_valid = yt[mask]
             yp_valid = yp[mask]
@@ -1126,7 +1146,7 @@ def save_holdout_extra_outputs_plots(
                 r2 = 1.0 - np.sum((yt_valid - yp_valid) ** 2) / max(np.sum((yt_valid - np.mean(yt_valid)) ** 2), 1e-12)
                 ax.set_title(f"{col}\nR²={r2:.3f}, RMSE={rmse:.2f}", fontsize=12, fontweight="bold")
             else:
-                m = all_metrics.get(col, {})
+                m = all_metrics.get(metric_col, {})
                 r2_val = m.get("r2", np.nan)
                 rmse_val = m.get("rmse", np.nan)
                 if np.isfinite(rmse_val):
@@ -2434,6 +2454,7 @@ def main():
                             y_extra_pred_notp,
                             extra_cols,
                             performance_dir,
+                            plot_targets=["MaxT_Adj", "Max_Power", "Time_MaxT", "Time_Max_Power"],
                         )
                         print(f"[INFO] Extra outputs holdout metrics: {extra_metrics}")
                     else:
@@ -2501,9 +2522,8 @@ def main():
                     performance_dir,
                     source_label="CV (OOF)",
                     output_name="extra_outputs_actual_vs_pred_cv.png",
-                    tmax_true=np.asarray(y_tmax)[notp_mask_cv],
-                    tmax_pred=np.asarray(oof["oof_tmax"])[notp_mask_cv],
-                    include_tmax_panel=True,
+                    include_tmax_panel=False,
+                    plot_targets=["MaxT_Adj", "Max_Power", "Time_MaxT", "Time_Max_Power"],
                 )
                 print(f"[INFO] Extra outputs CV metrics: {extra_metrics}")
 

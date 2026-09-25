@@ -1,6 +1,6 @@
 {
-  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_3\\surrogate_bundle.pkl",
-  "created_at": "2026-09-16T23:56:41",
+  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_1\\surrogate_bundle.pkl",
+  "created_at": "2026-09-25T23:49:33",
   "config": {
     "base_continuous_cols": [
       "A_Cell_D",
@@ -68,8 +68,7 @@
       ]
     },
     "other_regression_cols": [
-      "MaxT_Adj_Y",
-      "MaxT_Adj_Z",
+      "MaxT_Adj",
       "Max_Power",
       "Time_MaxT",
       "Time_Max_Power"
@@ -80,17 +79,17 @@
     "pass_label": 0,
     "fail_label": 1,
     "model_mode": "hybrid",
-    "input_csv": "Initial_Dataset.csv"
+    "input_csv": "0_Itr_10_Dataset.csv"
   },
   "metadata": {
-    "model_id": "surrogate-79ea4136b351",
-    "try_dir": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_3",
-    "try_name": "Try_3",
-    "selected_model": "gp (hybrid fallback)",
-    "selected_model_kind": "gp",
-    "input_csv": "Initial_Dataset.csv",
+    "model_id": "surrogate-51de34594ce4",
+    "try_dir": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_1",
+    "try_name": "Try_1",
+    "selected_model": "hybrid",
+    "selected_model_kind": "hybrid",
+    "input_csv": "0_Itr_10_Dataset.csv",
     "final_test_csv": "z_Final_Dataset.csv",
-    "train_row_count": 60,
+    "train_row_count": 264,
     "random_seed": 42,
     "model_selection_mode": "hybrid"
   }

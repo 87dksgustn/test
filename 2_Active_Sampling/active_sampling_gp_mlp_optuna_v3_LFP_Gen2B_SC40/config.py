@@ -4,7 +4,7 @@
 # User-editable configuration
 # ============================================================
 
-INPUT_CSV = "Initial_Dataset.csv"
+INPUT_CSV = "0_Itr_10_Dataset.csv"
 FINAL_TEST_CSV = "z_Final_Dataset.csv"
 
 # Base continuous columns (original features)
@@ -28,8 +28,8 @@ TMAX_COL = "MaxT_TB"        # Valid mainly for NoTP cases
 
 # Extra regression outputs (evaluation-only, not used for sampling decisions).
 # These are trained/evaluated on NoTP rows only, same as TMAX_COL.
-# Include both Time_MaxT and Time_Max_Power as independent learned targets.
-OTHER_REGRESSION_COLS = ["MaxT_Adj_Y", "MaxT_Adj_Z", "Max_Power", "Time_MaxT", "Time_Max_Power"]
+# Use J-column MaxT_Adj as the first extra target for plotting/reporting consistency.
+OTHER_REGRESSION_COLS = ["MaxT_Adj", "Max_Power", "Time_MaxT", "Time_Max_Power"]
 TIME_FEATURE_COLS = []
 
 # Extra outputs policy flags
@@ -147,9 +147,14 @@ GP_USE_ARD = True  # Enabled for production; final model uses per-feature length
 GP_OPTUNA_USE_ARD = False  # Keep False for speed
 TMAX_OPTUNA_USE_ARD = False  # Keep False for speed
 
-# Use ARD during model selection CV and holdout evaluation.
-# Set False to speed up model comparison while keeping ARD for final fit only.
-GP_MODEL_SELECTION_USE_ARD = False  # Keep False for speed
+# === ARD consistency: Screen -> Re-rank -> Reuse ===
+# Optuna screens kernels with fast isotropic CV (Stage 1), then the top-k trials
+# are re-evaluated with ARD kernels warm-started from the tuned isotropic
+# length_scale (Stage 2). The ARD winner becomes the tuned config and its CV
+# result is reused as the GP selection score (Stage 3), so the evaluated model
+# matches the deployed ARD model. Set to 0 to disable (legacy isotropic-only).
+GP_ARD_RERANK_TOP_K = 3
+TMAX_ARD_RERANK_TOP_K = 3
 
 # Adaptive hybrid weighting for boundary bucket.
 # Data-driven mode: boundary classifier uncertainty weight is determined

@@ -47,8 +47,9 @@ def evaluate_holdout_model(model_kind, x_train, y_class, y_tmax, y_extra, config
         etr, eva = y_extra[tr_idx], y_extra[va_idx]
 
     if model_kind == "gp":
-        # Use isotropic kernel for holdout evaluation (faster), ARD only for final fit
-        use_ard_for_holdout = getattr(config, "GP_MODEL_SELECTION_USE_ARD", False)
+        # Match the deployed model: ARD (warm-started from tuned params) so the
+        # holdout comparison evaluates the same model that would be deployed.
+        use_ard_for_holdout = getattr(config, "GP_USE_ARD", True)
         model = fit_gp_models(
             xtr,
             ytr,
@@ -122,9 +123,14 @@ def select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_pa
     tmax_params = tuned_params.get("tmax_params")
     mlp_params = tuned_params.get("mlp_params")
     extra_cols = extra_cols or []
-    # Use isotropic kernel for CV evaluation (faster), ARD only for final fit
-    use_ard_for_cv = getattr(config, "GP_MODEL_SELECTION_USE_ARD", False)
-    gp_cv = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=gp_params, random_state=config.RANDOM_SEED, use_ard=use_ard_for_cv)
+    # Stage 3 reuse (Screen -> Re-rank -> Reuse): the ARD CV of the Optuna re-rank
+    # winner is reused so the selection score describes the deployed ARD model.
+    gp_cv = tuned_params.get("gp_ard_cv_result")
+    gp_cv_source = "optuna_ard_rerank"
+    if gp_cv is None or "error" in gp_cv.get("summary", {}):
+        # Fallback (Optuna skipped/failed): evaluate with the same ARD setting as the final fit.
+        gp_cv = evaluate_gpc_cv(x_train, y_class, y_tmax=y_tmax, pass_label=config.PASS_LABEL, tp_label=config.FAIL_LABEL, n_splits=config.CV_SPLITS, weights=config.MODEL_SELECTION_WEIGHTS, std_penalty=config.CV_STD_PENALTY, params=gp_params, random_state=config.RANDOM_SEED, use_ard=getattr(config, "GP_USE_ARD", True))
+        gp_cv_source = "direct_cv"
     gp_models = fit_gp_models(
         x_train,
         y_class,
@@ -147,6 +153,7 @@ def select_and_fit_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_pa
         "selected_model": "gp",
         "reason": "",
         "evaluation_method": "cv",
+        "gp_cv_source": gp_cv_source,
         "cv_splits": gp_cv["summary"].get("cv_splits", config.CV_SPLITS),
         "gp_cv_result": gp_cv["summary"],
         "gp_score": gp_score,
@@ -235,7 +242,9 @@ def select_hybrid_model(df, x_train, y_class, y_tmax, y_extra, config, tuned_par
         return gp_models, report, {}
     
     # Evaluate both models with CV (including extra outputs)
-    use_ard_for_cv = getattr(config, "GP_MODEL_SELECTION_USE_ARD", False)
+    # Match the deployed model: ARD warm-started from tuned params. Kept consistent
+    # with the final fit so per-task hybrid selection reflects deployed performance.
+    use_ard_for_cv = getattr(config, "GP_USE_ARD", True)
     
     gp_cv = evaluate_gp_cv_with_extra(
         x_train, y_class, y_tmax, y_extra,
