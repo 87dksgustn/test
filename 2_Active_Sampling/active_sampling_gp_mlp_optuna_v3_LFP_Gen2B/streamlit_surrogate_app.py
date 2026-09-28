@@ -28,7 +28,7 @@ CHEMISTRY_BUNDLE_TAG = {
 CONFIDENCE_Z = {90: 1.645, 95: 1.960, 99: 2.576}
 PTP_BOOTSTRAP_SAMPLES = 1500
 PTP_BOOTSTRAP_N = 200
-TOLERANCE_SAMPLES = 5000
+TOLERANCE_SAMPLES = 20000
 TOLERANCE_LHS_SEED = 20260911
 
 # Display-only placeholders for variables that are not part of a chemistry's
@@ -274,6 +274,14 @@ def chemistry_bundle_candidates(chemistry: str):
 
     named = []
     generic = []
+
+    if chemistry == "LFP Gen2B":
+        named.append(
+            runtime_root().parent
+            / "active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40"
+            / "outputs"
+            / "latest_surrogate_bundle.pkl"
+        )
 
     # Highest priority in packaged runtime: chemistry-specific embedded bundle.
     named.extend(embedded_bundle_paths_for_chemistry(chemistry))
@@ -551,20 +559,33 @@ def display_table_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def render_centered_table(df: pd.DataFrame):
-    table_html = display_table_df(df).to_html(index=False, escape=False)
+def render_centered_table(df: pd.DataFrame, highlight_tpnotp: bool = False):
+    display_df = display_table_df(df)
+    table_html = display_df.to_html(index=False, escape=False)
+    highlight_css = ""
+    if highlight_tpnotp and "TP/NoTP" in display_df.columns:
+        tpnotp_index = int(display_df.columns.get_loc("TP/NoTP")) + 1
+        highlight_css = (
+            ".centered-table-wrap th:nth-child("
+            + str(tpnotp_index)
+            + "), "
+            ".centered-table-wrap td:nth-child("
+            + str(tpnotp_index)
+            + ") { background-color: rgba(220, 53, 69, 0.16) !important; }"
+        )
     st.markdown(
-        """
+        f"""
 <style>
-.centered-table-wrap table {
+.centered-table-wrap table {{
   margin-left: auto;
   margin-right: auto;
   border-collapse: collapse;
-}
+}}
 .centered-table-wrap th,
-.centered-table-wrap td {
+.centered-table-wrap td {{
   text-align: center !important;
-}
+}}
+{highlight_css}
 </style>
 """
         + f"<div class='centered-table-wrap'>{table_html}</div>",
@@ -1402,6 +1423,58 @@ def collapse_tolerance_scenarios_to_range_row(df: pd.DataFrame, input_cols: list
     return pd.DataFrame([collapsed])
 
 
+def render_tolerance_ptp_distribution(pred_df: pd.DataFrame):
+    if "p_tp" not in pred_df.columns or len(pred_df) < 2:
+        return
+
+    base_probability = pd.to_numeric(pred_df["p_tp"].iloc[0], errors="coerce")
+    sample_probabilities = pd.to_numeric(pred_df["p_tp"].iloc[1:], errors="coerce").dropna()
+    if sample_probabilities.empty:
+        return
+
+    st.caption(
+        f"공차 범위에서 생성한 LHS 입력 조합 {len(sample_probabilities):,}개의 모델 예측 분포입니다. "
+        "샘플 비율은 실제 발생 확률이 아니라 공차 시나리오 내 예측값의 비율입니다."
+    )
+
+    above_threshold = float((sample_probabilities >= 0.5).mean())
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Min P(TP)", f"{sample_probabilities.min():.2f}")
+    metric_cols[1].metric("Median P(TP)", f"{sample_probabilities.median():.2f}")
+    metric_cols[2].metric("Max P(TP)", f"{sample_probabilities.max():.2f}")
+    metric_cols[3].metric("샘플 중 P(TP) >= 0.5", f"{above_threshold:.1%}")
+
+    sample_weights = np.full(len(sample_probabilities), 100.0 / len(sample_probabilities))
+    fig, ax = plt.subplots(figsize=(7, 3.5), dpi=120)
+    ax.hist(
+        sample_probabilities,
+        bins=30,
+        range=(0.0, 1.0),
+        weights=sample_weights,
+        color="#438a78",
+        edgecolor="white",
+        linewidth=0.6,
+    )
+    ax.axvline(0.5, color="#c94c4c", linestyle="--", linewidth=1.5, label="TP/NoTP threshold (0.50)")
+    if pd.notna(base_probability):
+        ax.axvline(
+            float(base_probability),
+            color="#315f9b",
+            linestyle="-",
+            linewidth=1.5,
+            label=f"Base P(TP) ({float(base_probability):.2f})",
+        )
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("Predicted P(TP)")
+    ax.set_ylabel("LHS scenarios (%)")
+    ax.set_title("TP Probability Distribution Across Tolerance Scenarios")
+    ax.grid(axis="y", alpha=0.2, linestyle="--")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+    plt.close(fig)
+
+
 def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
     schema = bundle_schema(bundle)
     bounds = schema["continuous_bounds"]
@@ -1411,6 +1484,10 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
     placeholders = CHEMISTRY_PLACEHOLDER_INPUTS.get(chemistry, {})
 
     ordered_vars = schema_input_columns(bundle, chemistry)
+    result_key = f"single_result_df_{chemistry}"
+    prediction_key = f"single_prediction_df_{chemistry}"
+    tolerance_key = f"single_active_tolerances_{chemistry}"
+    distribution_expander_key = f"single_ptp_distribution_{chemistry}"
 
     st.subheader("Single Prediction")
 
@@ -1620,13 +1697,49 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
             result_df.insert(1, "predict_mode", "single")
             result_df = collapse_tolerance_scenarios_to_range_row(result_df, ordered_vars)
             stash_pending_history("pending_single_history_json", result_df)
+            st.session_state[result_key] = result_df.copy()
+            st.session_state[prediction_key] = pred_df.copy()
+            st.session_state[tolerance_key] = dict(active_tolerances)
             st.success("Prediction succeeded")
-            shown_df = prediction_view_df(result_df, admin_mode)
-            if active_tolerances:
-                shown_df = annotate_inputs_with_tolerance(shown_df, active_tolerances)
-            render_centered_table(shown_df)
         except Exception as e:
             st.error(f"Prediction failed: {e}")
+
+    result_df = st.session_state.get(result_key)
+    pred_df = st.session_state.get(prediction_key)
+    active_tolerances = st.session_state.get(tolerance_key, {})
+    p_tp_values = (
+        pd.to_numeric(pred_df["p_tp"], errors="coerce").dropna()
+        if isinstance(pred_df, pd.DataFrame) and "p_tp" in pred_df.columns
+        else pd.Series(dtype=float)
+    )
+    has_tolerance_distribution = (
+        isinstance(pred_df, pd.DataFrame)
+        and len(pred_df) > 1
+        and not p_tp_values.empty
+        and float(p_tp_values.min()) <= 0.5 <= float(p_tp_values.max())
+    )
+
+    if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+        table_slot = st.empty()
+        distribution_expander = None
+        show_tolerance_distribution = False
+        if has_tolerance_distribution:
+            distribution_expander = st.expander(
+                "TP/NoTP 확률 분포 (공차 시나리오)",
+                expanded=False,
+                key=distribution_expander_key,
+                on_change="rerun",
+            )
+            show_tolerance_distribution = distribution_expander.open
+
+        shown_df = prediction_view_df(result_df, admin_mode)
+        if active_tolerances:
+            shown_df = annotate_inputs_with_tolerance(shown_df, active_tolerances)
+        with table_slot.container():
+            render_centered_table(shown_df, highlight_tpnotp=show_tolerance_distribution)
+        if show_tolerance_distribution and distribution_expander is not None:
+            with distribution_expander:
+                render_tolerance_ptp_distribution(pred_df)
 
     show_save_history_button("pending_single_history_json", "Save This Single Prediction to History", chemistry)
 
@@ -1722,7 +1835,11 @@ def main():
         except Exception:
             pass
 
-    st.set_page_config(page_title="Surrogate Predictor", layout="wide")
+    st.set_page_config(
+        page_title="Surrogate Predictor",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     st.title("Surrogate Predictor")
     st.caption("Safety Simulation Team. All rights reserved")
 

@@ -1,0 +1,151 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": true,
+    "mlp_optuna_eligible": true,
+    "n_total": 371,
+    "n_notp": 190,
+    "n_tp": 181
+  },
+  "gp": {
+    "best_value": 0.7679039495167899,
+    "n_trials": 30,
+    "best_params": {
+      "kernel": "Matern52",
+      "constant": 1.5930522616241019,
+      "length_scale": 2.2989971688740667
+    },
+    "use_ard_in_optuna": false,
+    "ard_rerank": {
+      "top_k": 3,
+      "candidates": [
+        {
+          "params": {
+            "kernel": "Matern52",
+            "constant": 1.5930522616241019,
+            "length_scale": 2.2989971688740667
+          },
+          "isotropic_stable_score": 0.7679039495167899,
+          "ard_stable_score": 0.7880137536710775
+        },
+        {
+          "params": {
+            "kernel": "Matern52",
+            "constant": 0.7309539835912913,
+            "length_scale": 1.0425514211149
+          },
+          "isotropic_stable_score": 0.7679039495167899,
+          "ard_stable_score": 0.7880137536710775
+        },
+        {
+          "params": {
+            "kernel": "Matern52",
+            "constant": 0.1028002961790561,
+            "length_scale": 3.7753859096509106
+          },
+          "isotropic_stable_score": 0.7679039495167899,
+          "ard_stable_score": 0.7880137536710775
+        }
+      ],
+      "winner_params": {
+        "kernel": "Matern52",
+        "constant": 1.5930522616241019,
+        "length_scale": 2.2989971688740667
+      },
+      "winner_ard_stable_score": 0.7880137536710775,
+      "note": "Winner ARD CV is reused as gp_cv_result in model selection (evaluated model == deployed model)."
+    }
+  },
+  "mlp": {
+    "best_value": 0.803739989010526,
+    "n_trials": 20,
+    "best_params": {
+      "n_layers": 3,
+      "width": 128,
+      "dropout": 0.26897140576386674,
+      "learning_rate": 0.0018470160176912015,
+      "weight_decay": 1.7656814146780322e-05,
+      "tmax_loss_weight": 0.6793431802088473,
+      "hidden_dims": [
+        128,
+        128,
+        128
+      ]
+    },
+    "gate": {
+      "min_tp_recall": 0.2,
+      "min_tp_f1": 0.15,
+      "max_tmax_rmse": null,
+      "min_tmax_r2": null,
+      "tmax_tiebreak_weight": 0.01,
+      "trials_total": 20,
+      "trials_passed_gate": 20,
+      "trials_failed_gate": 0
+    }
+  },
+  "tmax": {
+    "best_value_rmse": 3.0020262896819694,
+    "n_trials": 25,
+    "best_params": {
+      "kernel": "Matern32",
+      "constant": 0.17165146175355125,
+      "length_scale": 1.384972754393154,
+      "noise_level": 8.511787445532654e-05,
+      "alpha": 7.491050642420612e-10,
+      "normalize_y": false
+    },
+    "objective": "minimize_noTP_tmax_rmse",
+    "use_ard_in_optuna": false,
+    "ard_rerank": {
+      "top_k": 3,
+      "candidates": [
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 0.2789063085931136,
+            "length_scale": 0.9909427300692444,
+            "noise_level": 2.0536590236742455e-06,
+            "alpha": 5.094574766316244e-09,
+            "normalize_y": false
+          },
+          "isotropic_rmse": 3.0020262896819694,
+          "ard_rmse": 2.9672553938059933
+        },
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 0.18369060988362948,
+            "length_scale": 0.9961421355796699,
+            "noise_level": 1.4037259338415241e-05,
+            "alpha": 7.192444530382118e-09,
+            "normalize_y": false
+          },
+          "isotropic_rmse": 3.002026311888879,
+          "ard_rmse": 2.9673029472662664
+        },
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 0.17165146175355125,
+            "length_scale": 1.384972754393154,
+            "noise_level": 8.511787445532654e-05,
+            "alpha": 7.491050642420612e-10,
+            "normalize_y": false
+          },
+          "isotropic_rmse": 3.002026316238879,
+          "ard_rmse": 2.967251208512673
+        }
+      ],
+      "winner_params": {
+        "kernel": "Matern32",
+        "constant": 0.17165146175355125,
+        "length_scale": 1.384972754393154,
+        "noise_level": 8.511787445532654e-05,
+        "alpha": 7.491050642420612e-10,
+        "normalize_y": false
+      },
+      "winner_ard_rmse": 2.967251208512673
+    }
+  }
+}

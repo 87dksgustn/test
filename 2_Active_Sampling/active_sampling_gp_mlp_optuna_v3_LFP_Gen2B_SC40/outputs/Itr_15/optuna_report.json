@@ -1,0 +1,150 @@
+{
+  "eligibility": {
+    "optuna_available": true,
+    "gp_optuna_eligible": true,
+    "tmax_optuna_eligible": true,
+    "mlp_optuna_eligible": true,
+    "n_total": 351,
+    "n_notp": 181,
+    "n_tp": 170
+  },
+  "gp": {
+    "best_value": 0.807597217694903,
+    "n_trials": 30,
+    "best_params": {
+      "kernel": "Matern32",
+      "constant": 1.5751320499779735,
+      "length_scale": 0.8066708658064159
+    },
+    "use_ard_in_optuna": false,
+    "ard_rerank": {
+      "top_k": 3,
+      "candidates": [
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 1.5751320499779735,
+            "length_scale": 0.8066708658064159
+          },
+          "isotropic_stable_score": 0.807597217694903,
+          "ard_stable_score": 0.8848379602147197
+        },
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 0.26587543983272705,
+            "length_scale": 0.8471463230820372
+          },
+          "isotropic_stable_score": 0.807597217694903,
+          "ard_stable_score": 0.8848379602147197
+        },
+        {
+          "params": {
+            "kernel": "Matern32",
+            "constant": 6.586289317583113,
+            "length_scale": 0.9803075314094034
+          },
+          "isotropic_stable_score": 0.807597217694903,
+          "ard_stable_score": 0.8848379602147197
+        }
+      ],
+      "winner_params": {
+        "kernel": "Matern32",
+        "constant": 1.5751320499779735,
+        "length_scale": 0.8066708658064159
+      },
+      "winner_ard_stable_score": 0.8848379602147197,
+      "note": "Winner ARD CV is reused as gp_cv_result in model selection (evaluated model == deployed model)."
+    }
+  },
+  "mlp": {
+    "best_value": 0.7883450642880918,
+    "n_trials": 20,
+    "best_params": {
+      "n_layers": 2,
+      "width": 256,
+      "dropout": 0.16102924679993544,
+      "learning_rate": 0.0008134604499591755,
+      "weight_decay": 0.0009560128826781365,
+      "tmax_loss_weight": 0.7015281126803747,
+      "hidden_dims": [
+        256,
+        256
+      ]
+    },
+    "gate": {
+      "min_tp_recall": 0.2,
+      "min_tp_f1": 0.15,
+      "max_tmax_rmse": null,
+      "min_tmax_r2": null,
+      "tmax_tiebreak_weight": 0.01,
+      "trials_total": 20,
+      "trials_passed_gate": 20,
+      "trials_failed_gate": 0
+    }
+  },
+  "tmax": {
+    "best_value_rmse": 2.304904205952897,
+    "n_trials": 25,
+    "best_params": {
+      "kernel": "RBF",
+      "constant": 0.3590045765889544,
+      "length_scale": 3.82452610266184,
+      "noise_level": 0.0011196167530017273,
+      "alpha": 1.919999926262955e-07,
+      "normalize_y": true
+    },
+    "objective": "minimize_noTP_tmax_rmse",
+    "use_ard_in_optuna": false,
+    "ard_rerank": {
+      "top_k": 3,
+      "candidates": [
+        {
+          "params": {
+            "kernel": "RBF",
+            "constant": 0.3590045765889544,
+            "length_scale": 3.82452610266184,
+            "noise_level": 0.0011196167530017273,
+            "alpha": 1.919999926262955e-07,
+            "normalize_y": true
+          },
+          "isotropic_rmse": 2.304904205952897,
+          "ard_rmse": 2.191565532267375
+        },
+        {
+          "params": {
+            "kernel": "RBF",
+            "constant": 0.4187594718900627,
+            "length_scale": 1.1119176698719702,
+            "noise_level": 0.00044466289554754527,
+            "alpha": 6.688747907702065e-07,
+            "normalize_y": true
+          },
+          "isotropic_rmse": 2.3049044755871875,
+          "ard_rmse": 2.1915830017538798
+        },
+        {
+          "params": {
+            "kernel": "RBF",
+            "constant": 0.6613644475520924,
+            "length_scale": 3.9497670274698624,
+            "noise_level": 0.0020421680644774516,
+            "alpha": 9.388157518401048e-08,
+            "normalize_y": true
+          },
+          "isotropic_rmse": 2.3049045522442944,
+          "ard_rmse": 2.1915859569056964
+        }
+      ],
+      "winner_params": {
+        "kernel": "RBF",
+        "constant": 0.3590045765889544,
+        "length_scale": 3.82452610266184,
+        "noise_level": 0.0011196167530017273,
+        "alpha": 1.919999926262955e-07,
+        "normalize_y": true
+      },
+      "winner_ard_rmse": 2.191565532267375
+    }
+  }
+}

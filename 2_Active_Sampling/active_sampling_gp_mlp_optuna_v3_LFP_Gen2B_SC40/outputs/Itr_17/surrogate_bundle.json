@@ -1,6 +1,6 @@
 {
-  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_2\\surrogate_bundle.pkl",
-  "created_at": "2026-09-28T13:50:31",
+  "bundle_path": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_1\\surrogate_bundle.pkl",
+  "created_at": "2026-09-28T10:41:16",
   "config": {
     "base_continuous_cols": [
       "A_Cell_D",
@@ -82,9 +82,9 @@
     "input_csv": "0_Itr_16_Dataset.csv"
   },
   "metadata": {
-    "model_id": "surrogate-06f1af3bc98e",
-    "try_dir": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_2",
-    "try_name": "Try_2",
+    "model_id": "surrogate-a6e05c33aff5",
+    "try_dir": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\Try_1",
+    "try_name": "Try_1",
     "selected_model": "hybrid",
     "selected_model_kind": "hybrid",
     "input_csv": "0_Itr_16_Dataset.csv",
