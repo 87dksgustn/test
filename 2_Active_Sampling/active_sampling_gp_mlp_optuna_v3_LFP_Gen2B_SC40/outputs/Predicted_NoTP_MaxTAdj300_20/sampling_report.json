@@ -1,0 +1,17 @@
+{
+  "source": "0_Itr_17_Dataset.csv",
+  "source_sha256": "386390be28dab50abe5c7f94312d76d847e2962d766feec36d7b11659b9d686b",
+  "bundle": "C:\\Users\\hyunsoo.an\\Desktop\\Barrier_Stop_Tool\\2_Active_Sampling\\active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\\outputs\\latest_surrogate_bundle.pkl",
+  "bundle_sha256": "dd03daa9c2ce2e210664d154b8e242e3bb466efa81ba0e93fef56ea6f4296c9f",
+  "selection_rule": "predicted_label == NoTP and MaxT_Adj_pred >= 300 when available; otherwise highest predicted MaxT_Adj within NoTP",
+  "noTP_threshold": "p_tp < 0.5",
+  "n_pool_after_exclusions": 193205,
+  "n_predicted_condition": 0,
+  "n_selected": 20,
+  "requested_condition_met": false,
+  "selected_maxT_adj_min": 277.6033914809511,
+  "selected_maxT_adj_max": 286.62509563593375,
+  "minimum_existing_distance": 0.05101451528342499,
+  "minimum_pairwise_distance": 0.45703896842048863,
+  "predictions_are_model_estimates": true
+}

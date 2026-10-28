@@ -25,6 +25,32 @@ CHEMISTRY_BUNDLE_TAG = {
     "LFP Gen2A": "LFP_Gen2A",
     "HV Mid-Ni Gen1": "MidNi_Gen1",
 }
+CHEMISTRY_DEFAULT_INPUTS = {
+    "LFP Gen2B": {
+        "A_Cell_D": 12.40,
+        "B_Barrier_Type": "Si",
+        "C_Barrier_Thx": 0.85,
+        "D_Barrier_Outer_Type": "Si1",
+        "E_Barrier_Outer_Thx": 2.00,
+        "F_ThermalResin_Thx": 1.00,
+    },
+    "LFP Gen2A": {
+        "A_Cell_D": 15.60,
+        "B_Barrier_Type": "Si",
+        "C_Barrier_Thx": 0.85,
+        "D_Barrier_Outer_Type": "Si1",
+        "E_Barrier_Outer_Thx": 2.00,
+        "F_ThermalResin_Thx": 1.00,
+    },
+    "HV Mid-Ni Gen1": {
+        "A_Cell_D": 13.375,
+        "B_Barrier_Type": "ETI",
+        "C_Barrier_Thx": 2.00,
+        "D_Barrier_Outer_Type": "Si",
+        "E_Barrier_Outer_Thx": 2.82,
+        "F_ThermalResin_Thx": 2.00,
+    },
+}
 CONFIDENCE_Z = {90: 1.645, 95: 1.960, 99: 2.576}
 PTP_BOOTSTRAP_SAMPLES = 1500
 PTP_BOOTSTRAP_N = 200
@@ -423,6 +449,16 @@ def add_confidence_band_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prediction_view_df(df: pd.DataFrame, admin_mode: bool) -> pd.DataFrame:
+    level = active_confidence_level()
+    ptp_lo_col = f"p_tp_ci{level}_lo"
+    ptp_hi_col = f"p_tp_ci{level}_hi"
+    tol_lo_col = "__p_tp_tol_lo"
+    tol_hi_col = "__p_tp_tol_hi"
+    df = df.copy()
+    for col in [ptp_lo_col, ptp_hi_col, tol_lo_col, tol_hi_col]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     collapsed_mode = "__range_collapsed__" in df.columns and bool(df["__range_collapsed__"].astype(bool).any())
     if not collapsed_mode:
         df = add_confidence_band_columns(df)
@@ -430,12 +466,6 @@ def prediction_view_df(df: pd.DataFrame, admin_mode: bool) -> pd.DataFrame:
     if "__range_collapsed__" in df.columns:
         df = df.drop(columns=["__range_collapsed__"], errors="ignore")
 
-    level = active_confidence_level()
-    ptp_lo_col = f"p_tp_ci{level}_lo"
-    ptp_hi_col = f"p_tp_ci{level}_hi"
-
-    tol_lo_col = "__p_tp_tol_lo"
-    tol_hi_col = "__p_tp_tol_hi"
     if "predicted_label" in df.columns and collapsed_mode and tol_lo_col in df.columns and tol_hi_col in df.columns:
         def _label_with_tol_band(label, lo, hi):
             if pd.isna(lo) or pd.isna(hi):
@@ -505,7 +535,20 @@ def prediction_view_df(df: pd.DataFrame, admin_mode: bool) -> pd.DataFrame:
         rest_cols = [col for col in remaining if col not in used_cols]
         remaining = desired_cols + rest_cols
 
-    return df.loc[:, ordered + remaining]
+    out = df.loc[:, ordered + remaining].copy()
+    if "predicted_label" in out.columns:
+        labels = out["predicted_label"].astype(str).str.split("<br", n=1).str[0].str.strip().str.upper()
+        tp_mask = labels.eq("TP")
+        time_bases = {"Time_MaxT", "Time_Max_Power", "Time_Tmax"}
+        masked_cols = [
+            col for col in out.columns
+            if is_output_display_column(col)
+            and col != "predicted_label"
+            and output_base_key(col) not in time_bases
+            and not str(col).startswith(tuple(f"{base}_" for base in time_bases))
+        ]
+        out.loc[tp_mask, masked_cols] = np.nan
+    return out
 
 
 def display_name_for_output(base_name: str, chemistry: str) -> str:
@@ -556,7 +599,7 @@ def display_table_df(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[col] = display_name_for_output(name[: -len("_pred")], chemistry)
     if rename_map:
         out = out.rename(columns=rename_map)
-    return out
+    return out.fillna("")
 
 
 def render_centered_table(df: pd.DataFrame, highlight_tpnotp: bool = False):
@@ -619,9 +662,6 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
         col for col in out.columns
         if col.lower() in {
             "max_power_pred", "max_power_std",
-            "time_max_power_pred", "time_max_power_std",
-            "time_maxt_pred", "time_maxt_std",
-            "time_tmax_pred", "time_tmax_std",
         }
     )
     if cols_to_mask:
@@ -634,6 +674,10 @@ def history_file_name(chemistry: str) -> str:
     if not slug:
         slug = "default"
     return f"prediction_history_{slug}.csv"
+
+
+def chemistry_default_value(chemistry: str, var_name: str):
+    return CHEMISTRY_DEFAULT_INPUTS.get(chemistry, {}).get(var_name)
 
 
 def history_csv_path(chemistry: str) -> Path:
@@ -669,15 +713,49 @@ def history_csv_path(chemistry: str) -> Path:
     return (Path.cwd() / file_name).resolve()
 
 
+def history_snapshot_df(df: pd.DataFrame) -> pd.DataFrame:
+    if "predicted_label" in df.columns:
+        views = []
+        for position in range(len(df)):
+            row = df.iloc[[position]].copy()
+            range_cols = [
+                col for col in row.columns
+                if str(col).endswith("_pred") and "~" in str(row.iloc[0][col])
+            ]
+            empty_bands = [
+                col for col in row.columns
+                if str(col).endswith("_band")
+                and f"{output_base_key(col)}_pred" in row.columns
+                and (pd.isna(row.iloc[0][col]) or row.iloc[0][col] == "")
+            ]
+            row = row.drop(columns=empty_bands)
+            if range_cols:
+                row["__range_collapsed__"] = True
+                row = row.drop(columns=[col for col in row.columns if str(col).endswith("_band")])
+            views.append(display_table_df(prediction_view_df(row, False)))
+        df = pd.concat(views, ignore_index=True) if views else df
+    out = display_table_df(df)
+    result_cols = [
+        "TP/NoTP" if base == "predicted_label" else display_name_for_output(base, active_chemistry())
+        for base in chemistry_output_base_order(active_chemistry())
+    ]
+    columns = list(dict.fromkeys(["predicted_at", "opt_rank", "pareto_rank"] + active_input_order() + result_cols))
+    out = out.loc[:, [col for col in columns if col in out.columns]].copy()
+    if "TP/NoTP" in out.columns:
+        labels = out["TP/NoTP"].astype(str).str.split("<br", n=1).str[0].str.strip().str.upper()
+        masked_cols = [col for col in result_cols if col in out.columns and col not in {"TP/NoTP", "Time_MaxT", "Time_MaxPower"}]
+        out.loc[labels.eq("TP"), masked_cols] = ""
+    return out.fillna("")
+
+
 def append_history(rows_df: pd.DataFrame, chemistry: str):
     p = history_csv_path(chemistry)
-    rows_df = mask_tp_regression_outputs(rows_df)
+    rows_df = history_snapshot_df(rows_df)
     if p.exists():
-        prev = pd.read_csv(p)
+        prev = history_snapshot_df(pd.read_csv(p, keep_default_na=False))
         merged = pd.concat([prev, rows_df], ignore_index=True)
     else:
         merged = rows_df.copy()
-    merged = mask_tp_regression_outputs(merged)
     merged.to_csv(p, index=False, encoding="utf-8-sig")
 
 
@@ -1159,7 +1237,7 @@ def load_history(chemistry: str) -> pd.DataFrame:
     p = history_csv_path(chemistry)
     if not p.exists():
         return pd.DataFrame()
-    return mask_tp_regression_outputs(pd.read_csv(p))
+    return history_snapshot_df(pd.read_csv(p, keep_default_na=False))
 
 
 def clear_history(chemistry: str):
@@ -1610,10 +1688,16 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
                     opts = list(levels.get(var, []))
                     if not opts:
                         opts = [""]
+                    preferred = chemistry_default_value(chemistry, var)
+                    selected_index = 0
+                    if preferred is not None:
+                        preferred_s = str(preferred)
+                        if preferred_s in opts:
+                            selected_index = opts.index(preferred_s)
                     row[var] = container.selectbox(
                         f"{var}_input",
                         options=opts,
-                        index=0,
+                        index=selected_index,
                         label_visibility="collapsed",
                         key=widget_key,
                     )
@@ -1637,17 +1721,22 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
                         max_value=10.0,
                         value=0.0,
                         step=0.1,
+                        format="%.1f%%",
                         disabled=(not use_percent_for_cont),
                         label_visibility="collapsed",
                         key=f"single_tol_{chemistry}_{var}",
                     ) if allow_tolerance else 0.0
                     if not allow_tolerance:
                         header_cols[1].markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
+                    default_value = chemistry_default_value(chemistry, var)
+                    if default_value is None:
+                        default_value = (float(lo) + float(hi)) / 2
+                    default_value = min(max(float(default_value), float(lo)), float(hi))
                     row[var] = container.number_input(
                         f"{var}_input",
                         min_value=float(lo),
                         max_value=float(hi),
-                        value=float((float(lo) + float(hi)) / 2),
+                        value=float(default_value),
                         step=0.01,
                         label_visibility="collapsed",
                         key=f"{widget_key}_abs",
@@ -1696,7 +1785,6 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
             result_df.insert(0, "predicted_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             result_df.insert(1, "predict_mode", "single")
             result_df = collapse_tolerance_scenarios_to_range_row(result_df, ordered_vars)
-            stash_pending_history("pending_single_history_json", result_df)
             st.session_state[result_key] = result_df.copy()
             st.session_state[prediction_key] = pred_df.copy()
             st.session_state[tolerance_key] = dict(active_tolerances)
@@ -1732,9 +1820,11 @@ def single_predict_ui(bundle, admin_mode: bool, chemistry: str):
             )
             show_tolerance_distribution = distribution_expander.open
 
-        shown_df = prediction_view_df(result_df, admin_mode)
+        shown_df = prediction_view_df(result_df, False)
         if active_tolerances:
             shown_df = annotate_inputs_with_tolerance(shown_df, active_tolerances)
+        history_payload = history_snapshot_df(shown_df)
+        stash_pending_history("pending_single_history_json", history_payload)
         with table_slot.container():
             render_centered_table(shown_df, highlight_tpnotp=show_tolerance_distribution)
         if show_tolerance_distribution and distribution_expander is not None:
@@ -1807,8 +1897,7 @@ def history_ui(admin_mode: bool, chemistry: str):
         st.info("No accumulated prediction history yet.")
         return
 
-    hist = hist.dropna(axis=1, how="all")
-    hist_view = prediction_view_df(hist, admin_mode)
+    hist_view = hist
     st.write(f"Total rows: {len(hist)}")
     render_centered_table(hist_view.tail(200))
     st.download_button(
@@ -1836,11 +1925,11 @@ def main():
             pass
 
     st.set_page_config(
-        page_title="Surrogate Predictor",
+        page_title="Quick Calculation Tool for Barrier Stop TP",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
-    st.title("Surrogate Predictor")
+    st.title("Quick Calculation Tool for Barrier Stop TP")
     st.caption("Safety Simulation Team. All rights reserved")
 
     if "is_admin" not in st.session_state:

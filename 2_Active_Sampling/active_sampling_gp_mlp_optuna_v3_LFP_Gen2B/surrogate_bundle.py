@@ -101,7 +101,13 @@ def mask_tp_regression_outputs(df: pd.DataFrame) -> pd.DataFrame:
 
     cols_to_mask.extend(
         col for col in out.columns
-        if col.lower() in {"max_power_pred", "max_power_std"}
+        if col.lower() in {
+            "max_power_pred", "max_power_std",
+            "maxt_tb_top_pred", "maxt_tb_top_std",
+            "maxt_tb_btm_pred", "maxt_tb_btm_std",
+            "maxt_adj_top_pred", "maxt_adj_top_std",
+            "maxt_adj_btm_pred", "maxt_adj_btm_std",
+        }
     )
 
     if cols_to_mask:

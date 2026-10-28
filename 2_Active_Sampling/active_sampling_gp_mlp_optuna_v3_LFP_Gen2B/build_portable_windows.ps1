@@ -27,15 +27,9 @@ if (-not (Test-Path $pythonExe)) {
     throw "Python not found: $pythonExe"
 }
 
-$bundlePath = Join-Path $projectRoot "outputs\latest_surrogate_bundle.pkl"
+$bundlePath = Join-Path (Split-Path $projectRoot -Parent) "active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40\outputs\latest_surrogate_bundle.pkl"
 if (-not (Test-Path $bundlePath)) {
     throw "Embedded bundle not found: $bundlePath"
-}
-
-$bundleMap = @{
-    "LFP_Gen2B" = $bundlePath
-    "LFP_Gen2A" = (Join-Path (Split-Path $projectRoot -Parent) "active_sampling_gp_mlp_optuna_v3_LFP_Gen2A\outputs\latest_surrogate_bundle.pkl")
-    "MidNi_Gen1" = (Join-Path (Split-Path $projectRoot -Parent) "active_sampling_gp_mlp_optuna_v3_MidNi_Gen1\outputs\latest_surrogate_bundle.pkl")
 }
 
 & $pythonExe -m pip install --upgrade pip pyinstaller
@@ -45,66 +39,25 @@ try {
 $pyiArgs = @(
     "--noconfirm",
     "--clean",
-    "--name", "SurrogatePredictor",
-    "--collect-all", "streamlit",
-    "--copy-metadata", "streamlit",
-    "--exclude-module", "tensorflow",
-    "--exclude-module", "tensorboard",
-    "--exclude-module", "jax",
-    "--exclude-module", "jaxlib",
-    "--hidden-import", "streamlit_surrogate_app",
-    "--hidden-import", "surrogate_bundle",
-    "--hidden-import", "config",
-    "--add-data", "outputs;outputs",
-    "--add-data", "outputs/latest_surrogate_bundle.pkl;embedded_bundle",
-    "launcher_streamlit.py"
+    (Join-Path $projectRoot "SurrogatePredictor.spec"),
+    "--"
 )
-
-foreach ($tag in $bundleMap.Keys) {
-    $src = $bundleMap[$tag]
-    if (Test-Path $src) {
-        $pyiArgs += @("--add-data", "$src;embedded_bundle/$tag")
-        Write-Host "[INFO] Embedded bundle added: $tag"
-    }
-    else {
-        Write-Host "[WARN] Bundle not found for $tag : $src"
-    }
-}
-
-$projectHiddenImports = @(
-    "acquisition",
-    "batch_selector",
-    "candidate_generator",
-    "config",
-    "data_loader",
-    "diagnostics",
-    "discrete_space",
-    "evaluation",
-    "metrics_utils",
-    "model_selector",
-    "models_gp",
-    "models_mlp",
-    "optuna_tuning",
-    "preprocessing",
-    "surrogate_bundle"
-)
-
-foreach ($moduleName in $projectHiddenImports) {
-    $pyiArgs += @("--hidden-import", $moduleName)
-}
 
 if (-not $Console) {
-    $pyiArgs = @("--windowed") + $pyiArgs
+    $pyiArgs += "--windowed"
 }
 
-if ($OneFile) {
-    $pyiArgs = @("--onefile") + $pyiArgs
+if (-not $OneFile) {
+    $pyiArgs += "--onedir"
 }
 
 & $pythonExe -m PyInstaller @pyiArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller failed with exit code $LASTEXITCODE"
+}
 
 if ($Lean) {
-    Write-Host "[INFO] Lean mode selected."
+    Write-Host "[INFO] Runtime-only data collection is enabled for all builds."
 }
 
 if ($OneFile) {
@@ -117,18 +70,6 @@ else {
     $distRoot = Join-Path $projectRoot "dist\SurrogatePredictor"
     if (-not (Test-Path $distRoot)) {
         throw "Build output folder not found: $distRoot"
-    }
-
-    # Remove non-runtime Streamlit agent templates that create very long paths
-    # and break extraction with Windows Explorer.
-    $longPathPruneTargets = @(
-        (Join-Path $distRoot "_internal\streamlit\.agents")
-    )
-    foreach ($target in $longPathPruneTargets) {
-        if (Test-Path $target) {
-            Remove-Item $target -Recurse -Force
-            Write-Host "[INFO] Pruned long-path asset: $target"
-        }
     }
 
     # Keep package path short to avoid Windows long-path issues during copy.

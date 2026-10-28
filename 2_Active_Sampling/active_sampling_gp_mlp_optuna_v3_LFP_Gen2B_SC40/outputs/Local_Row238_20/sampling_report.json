@@ -1,0 +1,73 @@
+{
+  "source": "0_Itr_17_Dataset.csv",
+  "source_sha256": "386390be28dab50abe5c7f94312d76d847e2962d766feec36d7b11659b9d686b",
+  "reference_excel_row": 238,
+  "reference_features": {
+    "A_Cell_D": 9.725647314,
+    "B_Barrier_Type": "Si1",
+    "C_Barrier_Thx": 0.878922218,
+    "D_Barrier_Outer_Type": "Si1",
+    "E_Barrier_Outer_Thx": 2.135299117,
+    "F_ThermalResin_Thx": 1.042618334
+  },
+  "method": "Local LHS pool, nearest-center seed, greedy maximin selection",
+  "seed": 42,
+  "local_bounds": {
+    "A_Cell_D": [
+      9.325647314,
+      10.125647314
+    ],
+    "C_Barrier_Thx": [
+      0.808922218,
+      0.9489222180000001
+    ],
+    "E_Barrier_Outer_Thx": [
+      2.015299117,
+      2.2552991170000003
+    ],
+    "F_ThermalResin_Thx": [
+      0.9226183339999999,
+      1.1626183339999998
+    ]
+  },
+  "normalization_bounds": {
+    "A_Cell_D": [
+      8.0,
+      16.0
+    ],
+    "C_Barrier_Thx": [
+      0.25,
+      2.0
+    ],
+    "E_Barrier_Outer_Thx": [
+      1.1,
+      3.0
+    ],
+    "F_ThermalResin_Thx": [
+      0.5,
+      2.5
+    ]
+  },
+  "excluded_reference_ranges": {
+    "A_Cell_D": {
+      "center": 12.4,
+      "half_width": 0.01
+    },
+    "C_Barrier_Thx": {
+      "center": 0.85,
+      "half_width": 0.01
+    },
+    "E_Barrier_Outer_Thx": {
+      "center": 2.0,
+      "half_width": 0.01
+    },
+    "F_ThermalResin_Thx": {
+      "center": 1.0,
+      "half_width": 0.01
+    }
+  },
+  "n_selected": 20,
+  "minimum_existing_distance": 0.02001860260395919,
+  "minimum_pairwise_distance": 0.0700555774894132,
+  "outcomes": "Unknown; no TP/NoTP or temperature predictions assigned"
+}

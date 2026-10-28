@@ -1,0 +1,325 @@
+{
+  "source_csv": "0_Itr_17_Dataset.csv",
+  "source_sha256": "386390be28dab50abe5c7f94312d76d847e2962d766feec36d7b11659b9d686b",
+  "n_source_complete_in_bounds": 411,
+  "n_output": 80,
+  "seed": 42,
+  "method": "Per-combo multivariate Gaussian KDE resampling with rejection and randomized sequential spacing",
+  "continuous_columns": [
+    "A_Cell_D",
+    "C_Barrier_Thx",
+    "E_Barrier_Outer_Thx",
+    "F_ThermalResin_Thx"
+  ],
+  "discrete_columns": [
+    "B_Barrier_Type",
+    "D_Barrier_Outer_Type"
+  ],
+  "combo_source_counts": {
+    "('Si1', 'PU')": 202,
+    "('Si1', 'Si1')": 209
+  },
+  "combo_quotas": {
+    "('Si1', 'PU')": 39,
+    "('Si1', 'Si1')": 41
+  },
+  "combo_output_counts": {
+    "('Si1', 'PU')": 39,
+    "('Si1', 'Si1')": 41
+  },
+  "candidate_pool": {
+    "('Si1', 'PU')": {
+      "generated": 100000,
+      "rejected_out_of_bounds": 46142,
+      "remaining_after_bounds_dedup_and_exclusions": 50979
+    },
+    "('Si1', 'Si1')": {
+      "generated": 100000,
+      "rejected_out_of_bounds": 38058,
+      "remaining_after_bounds_dedup_and_exclusions": 58084
+    }
+  },
+  "eligible_after_existing_spacing": {
+    "('Si1', 'PU')": 50062,
+    "('Si1', 'Si1')": 56463
+  },
+  "continuous_bounds": {
+    "A_Cell_D": [
+      8.0,
+      16.0
+    ],
+    "C_Barrier_Thx": [
+      0.25,
+      2.0
+    ],
+    "E_Barrier_Outer_Thx": [
+      1.1,
+      3.0
+    ],
+    "F_ThermalResin_Thx": [
+      0.5,
+      2.5
+    ]
+  },
+  "excluded_reference_ranges": {
+    "A_Cell_D": {
+      "center": 12.4,
+      "half_width": 0.01
+    },
+    "C_Barrier_Thx": {
+      "center": 0.85,
+      "half_width": 0.01
+    },
+    "E_Barrier_Outer_Thx": {
+      "center": 2.0,
+      "half_width": 0.01
+    },
+    "F_ThermalResin_Thx": {
+      "center": 1.0,
+      "half_width": 0.01
+    }
+  },
+  "normalized_distance_definition": "Euclidean distance using each base continuous feature scaled by its configured full design span",
+  "minimum_distance_threshold": 0.05,
+  "minimum_distance_to_existing": 0.05267635796268442,
+  "minimum_within_combo_pairwise_distance": {
+    "('Si1', 'PU')": 0.12973711197661963,
+    "('Si1', 'Si1')": 0.11187842303180671
+  },
+  "outcome_columns_left_blank": [
+    "TP_NoTP",
+    "MaxT_TB",
+    "MaxT_Adj",
+    "Max_Power",
+    "Time_MaxT",
+    "Time_Max_Power"
+  ],
+  "source_distribution_by_combo": {
+    "('Si1', 'PU')": {
+      "A_Cell_D": {
+        "mean": 12.058791449029705,
+        "std": 2.525400362919456,
+        "q10": 8.4888193871,
+        "median": 11.780871184999999,
+        "q90": 15.811118547000001
+      },
+      "C_Barrier_Thx": {
+        "mean": 0.9381421172178217,
+        "std": 0.29413187194077395,
+        "q10": 0.6180905041,
+        "median": 0.9525058390000001,
+        "q90": 1.2142037238999999
+      },
+      "E_Barrier_Outer_Thx": {
+        "mean": 2.127707925569307,
+        "std": 0.6268741449820173,
+        "q10": 1.2091708796,
+        "median": 2.165222407,
+        "q90": 2.9111204626
+      },
+      "F_ThermalResin_Thx": {
+        "mean": 1.6049925747326736,
+        "std": 0.6651433782629287,
+        "q10": 0.6300261561,
+        "median": 1.665088657,
+        "q90": 2.4281711849
+      },
+      "correlation": {
+        "A_Cell_D": {
+          "A_Cell_D": 1.0,
+          "C_Barrier_Thx": -0.1984788608613439,
+          "E_Barrier_Outer_Thx": 0.1398273768704714,
+          "F_ThermalResin_Thx": -0.0876739423564642
+        },
+        "C_Barrier_Thx": {
+          "A_Cell_D": -0.1984788608613439,
+          "C_Barrier_Thx": 1.0,
+          "E_Barrier_Outer_Thx": -0.1631810427602918,
+          "F_ThermalResin_Thx": 0.11427812653928185
+        },
+        "E_Barrier_Outer_Thx": {
+          "A_Cell_D": 0.1398273768704714,
+          "C_Barrier_Thx": -0.1631810427602918,
+          "E_Barrier_Outer_Thx": 1.0,
+          "F_ThermalResin_Thx": -0.001732058379460483
+        },
+        "F_ThermalResin_Thx": {
+          "A_Cell_D": -0.0876739423564642,
+          "C_Barrier_Thx": 0.11427812653928185,
+          "E_Barrier_Outer_Thx": -0.001732058379460483,
+          "F_ThermalResin_Thx": 1.0
+        }
+      }
+    },
+    "('Si1', 'Si1')": {
+      "A_Cell_D": {
+        "mean": 11.752455276114834,
+        "std": 2.1922761519392853,
+        "q10": 9.0760555454,
+        "median": 11.46901583,
+        "q90": 15.293674468
+      },
+      "C_Barrier_Thx": {
+        "mean": 0.8156823560095693,
+        "std": 0.2407176470397301,
+        "q10": 0.5347374456,
+        "median": 0.791095187,
+        "q90": 1.0827427844000004
+      },
+      "E_Barrier_Outer_Thx": {
+        "mean": 2.104198749861244,
+        "std": 0.5852949901869982,
+        "q10": 1.2251855136,
+        "median": 2.118345209,
+        "q90": 2.9288900048
+      },
+      "F_ThermalResin_Thx": {
+        "mean": 1.5296576684976078,
+        "std": 0.6580145461119633,
+        "q10": 0.662578863,
+        "median": 1.496527787,
+        "q90": 2.4228892242
+      },
+      "correlation": {
+        "A_Cell_D": {
+          "A_Cell_D": 1.0,
+          "C_Barrier_Thx": -0.10006054915600679,
+          "E_Barrier_Outer_Thx": -0.032786037314618745,
+          "F_ThermalResin_Thx": 0.02393991433544875
+        },
+        "C_Barrier_Thx": {
+          "A_Cell_D": -0.10006054915600679,
+          "C_Barrier_Thx": 1.0,
+          "E_Barrier_Outer_Thx": -0.39020826001777453,
+          "F_ThermalResin_Thx": -0.13717490298174428
+        },
+        "E_Barrier_Outer_Thx": {
+          "A_Cell_D": -0.032786037314618745,
+          "C_Barrier_Thx": -0.39020826001777453,
+          "E_Barrier_Outer_Thx": 1.0,
+          "F_ThermalResin_Thx": 0.0959572586136027
+        },
+        "F_ThermalResin_Thx": {
+          "A_Cell_D": 0.02393991433544875,
+          "C_Barrier_Thx": -0.13717490298174428,
+          "E_Barrier_Outer_Thx": 0.0959572586136027,
+          "F_ThermalResin_Thx": 1.0
+        }
+      }
+    }
+  },
+  "output_distribution_by_combo": {
+    "('Si1', 'PU')": {
+      "A_Cell_D": {
+        "mean": 11.080522282051282,
+        "std": 2.2648025561556473,
+        "q10": 8.537752600000001,
+        "median": 10.639323,
+        "q90": 14.257229
+      },
+      "C_Barrier_Thx": {
+        "mean": 0.9669864615384617,
+        "std": 0.33773206991987054,
+        "q10": 0.5389332,
+        "median": 0.955531,
+        "q90": 1.3637560000000002
+      },
+      "E_Barrier_Outer_Thx": {
+        "mean": 2.1376899999999996,
+        "std": 0.5595826445895097,
+        "q10": 1.3822455999999999,
+        "median": 2.258492,
+        "q90": 2.8253304
+      },
+      "F_ThermalResin_Thx": {
+        "mean": 1.5124585897435896,
+        "std": 0.5707077439140907,
+        "q10": 0.7683394,
+        "median": 1.467263,
+        "q90": 2.3251518
+      },
+      "correlation": {
+        "A_Cell_D": {
+          "A_Cell_D": 1.0,
+          "C_Barrier_Thx": -0.1843200752378208,
+          "E_Barrier_Outer_Thx": 0.13000521236154888,
+          "F_ThermalResin_Thx": 0.021417389971325116
+        },
+        "C_Barrier_Thx": {
+          "A_Cell_D": -0.1843200752378208,
+          "C_Barrier_Thx": 1.0,
+          "E_Barrier_Outer_Thx": -0.530290389276584,
+          "F_ThermalResin_Thx": -0.04034678287318712
+        },
+        "E_Barrier_Outer_Thx": {
+          "A_Cell_D": 0.13000521236154888,
+          "C_Barrier_Thx": -0.530290389276584,
+          "E_Barrier_Outer_Thx": 1.0,
+          "F_ThermalResin_Thx": -0.18458351805689183
+        },
+        "F_ThermalResin_Thx": {
+          "A_Cell_D": 0.021417389971325116,
+          "C_Barrier_Thx": -0.04034678287318712,
+          "E_Barrier_Outer_Thx": -0.18458351805689183,
+          "F_ThermalResin_Thx": 1.0
+        }
+      }
+    },
+    "('Si1', 'Si1')": {
+      "A_Cell_D": {
+        "mean": 11.417579731707317,
+        "std": 1.8996122484169502,
+        "q10": 9.036852,
+        "median": 11.386564,
+        "q90": 13.62375
+      },
+      "C_Barrier_Thx": {
+        "mean": 0.8179565853658537,
+        "std": 0.2395852145841825,
+        "q10": 0.545401,
+        "median": 0.824448,
+        "q90": 1.069369
+      },
+      "E_Barrier_Outer_Thx": {
+        "mean": 2.153581317073171,
+        "std": 0.5320085249166332,
+        "q10": 1.434367,
+        "median": 2.193475,
+        "q90": 2.87156
+      },
+      "F_ThermalResin_Thx": {
+        "mean": 1.3812499756097563,
+        "std": 0.5269092798198513,
+        "q10": 0.687149,
+        "median": 1.37546,
+        "q90": 2.066566
+      },
+      "correlation": {
+        "A_Cell_D": {
+          "A_Cell_D": 1.0,
+          "C_Barrier_Thx": -0.19545557908963396,
+          "E_Barrier_Outer_Thx": 0.067069164251748,
+          "F_ThermalResin_Thx": -0.18984206582375135
+        },
+        "C_Barrier_Thx": {
+          "A_Cell_D": -0.19545557908963396,
+          "C_Barrier_Thx": 1.0,
+          "E_Barrier_Outer_Thx": -0.439170041923904,
+          "F_ThermalResin_Thx": -0.12395622147640771
+        },
+        "E_Barrier_Outer_Thx": {
+          "A_Cell_D": 0.067069164251748,
+          "C_Barrier_Thx": -0.439170041923904,
+          "E_Barrier_Outer_Thx": 1.0,
+          "F_ThermalResin_Thx": 0.2814317564894316
+        },
+        "F_ThermalResin_Thx": {
+          "A_Cell_D": -0.18984206582375135,
+          "C_Barrier_Thx": -0.12395622147640771,
+          "E_Barrier_Outer_Thx": 0.2814317564894316,
+          "F_ThermalResin_Thx": 1.0
+        }
+      }
+    }
+  }
+}

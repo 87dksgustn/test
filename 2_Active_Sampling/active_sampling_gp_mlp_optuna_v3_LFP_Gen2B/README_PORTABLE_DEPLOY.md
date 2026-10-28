@@ -8,7 +8,10 @@
 - Minimize visible source files in distributed package
 
 ## Build
-1. Ensure bundle exists at `outputs/latest_surrogate_bundle.pkl`.
+1. Ensure the model bundles exist in the sibling projects:
+	- Gen2B: `../active_sampling_gp_mlp_optuna_v3_LFP_Gen2B_SC40/outputs/latest_surrogate_bundle.pkl`
+	- Gen2A: `../active_sampling_gp_mlp_optuna_v3_LFP_Gen2A/outputs/latest_surrogate_bundle.pkl`
+	- Mid-Ni: `../active_sampling_gp_mlp_optuna_v3_MidNi_Gen1/outputs/latest_surrogate_bundle.pkl`
 2. Run in PowerShell:
 
 ```powershell
@@ -17,6 +20,25 @@
 
 3. Output:
 - `dist/SP_v2026.3.zip`
+
+The script uses `SurrogatePredictor.spec` for both onefile and folder builds.
+Omit `-OneFile` for a folder build; use `-Console` to show the console.
+Runtime-only collection is always enabled, including when `-Lean` is omitted.
+
+The existing direct onefile build command is unchanged:
+
+```powershell
+pyinstaller --noconfirm --clean .\SurrogatePredictor.spec
+```
+
+For a direct folder build, append `-- --onedir`. Add `--windowed` after `--`
+to hide the console. Folder builds must be distributed with their full contents.
+
+The build excludes the project's `outputs` tree, duplicate model bundle copies,
+Streamlit `.agents`, `testing`, and `development` resources and modules.
+Streamlit runtime source, web assets, metadata, and the model libraries are retained.
+The `streamlit.hello` package must also be retained: Streamlit imports it during
+normal server startup, even when this application is not running a demo.
 
 ## Code Signing (optional but recommended)
 
@@ -39,7 +61,8 @@ Notes:
 - Usage stats disabled
 
 ## Model strategy
-- Default: embedded bundle (`embedded_bundle/latest_surrogate_bundle.pkl`)
+- Embedded bundles: one per chemistry under `embedded_bundle/<tag>/latest_surrogate_bundle.pkl`
+- Tags: `LFP_Gen2B`, `LFP_Gen2A`, `MidNi_Gen1`; Gen2B uses the SC40 source.
 - Optional: user can override bundle path in UI
 
 ## History option
